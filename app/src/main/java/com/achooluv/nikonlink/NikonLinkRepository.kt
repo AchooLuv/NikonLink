@@ -79,6 +79,14 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val _eventsSupported = MutableStateFlow(true)
     val eventsSupported: StateFlow<Boolean> = _eventsSupported
 
+    /** Files that failed in the last batch, so the browse screen can offer a retry. */
+    private val _failedFiles = MutableStateFlow<List<CameraFile>>(emptyList())
+    val failedFiles: StateFlow<List<CameraFile>> = _failedFiles
+
+    /** MediaStore URI of the most recently imported file ("open in gallery"). */
+    private val _lastUri = MutableStateFlow<String?>(null)
+    val lastUri: StateFlow<String?> = _lastUri
+
     private val thumbnailCache = object : LruCache<Int, ByteArray>(8 * 1024 * 1024) {
         override fun sizeOf(key: Int, value: ByteArray): Int = value.size
     }
@@ -188,8 +196,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
-    fun disconnect() {
-        userDisconnected = true
+    fun disconnect() {        userDisconnected = true
         connectJob?.cancel()
         keepAliveJob?.cancel()
         ConnectionService.stop(app)
@@ -207,9 +214,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private fun startKeepAlive() {
         keepAliveJob?.cancel()
         if (!settings.keepAlive.value) return
+        val intervalMs = settings.keepAliveSeconds.value * 1000L
         keepAliveJob = scope.launch {
             while (true) {
-                delay(15_000)
+                delay(intervalMs)
                 if (_state.value !is ConnState.Connected) break
                 val failure = runCatching { client.keepAlive() }.exceptionOrNull()
                 if (failure != null) {
@@ -218,6 +226,11 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 }
             }
         }
+    }
+
+    /** Re-arms the heartbeat after the interval preference changed. */
+    fun restartKeepAlive() {
+        if (_state.value is ConnState.Connected) startKeepAlive()
     }
 
     private fun handleLinkLost(error: Throwable) {
@@ -393,16 +406,32 @@ class NikonLinkRepository private constructor(private val app: Application) {
     fun download(files: List<CameraFile>, force: Boolean = false) {
         if (files.isEmpty()) return
         downloadJob?.cancel()
+        _failedFiles.value = emptyList()
         downloadJob = scope.launch {
             downloadMutex.withLock {
                 val chunk = settings.chunkSize.value
                 val partial = _profile.value?.supportsPartialObject ?: true
-                downloader.download(client, files, chunk, force, partial) { p ->
+                val result = downloader.download(client, files, chunk, force, partial) { p ->
                     _progress.value = p
                 }
+                _failedFiles.value = result.failed
+                _lastUri.value = result.lastUri
                 _importsVersion.value++
             }
         }
+    }
+
+    /** Re-runs only the files that failed last time. */
+    fun retryFailed() {
+        val failed = _failedFiles.value
+        if (failed.isNotEmpty()) download(failed)
+    }
+
+    /** Clears the "last batch" summary bar. */
+    fun clearTransferResult() {
+        _failedFiles.value = emptyList()
+        _lastUri.value = null
+        _progress.value = _progress.value.copy(message = null, doneCount = 0, failedCount = 0)
     }
 
     fun cancelDownloads() {

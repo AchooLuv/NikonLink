@@ -16,6 +16,13 @@ class SettingsStore(context: Context) {
     val keepAlive = MutableStateFlow(prefs.getBoolean(KEY_KEEP_ALIVE, true))
     val showRawThumbnails = MutableStateFlow(prefs.getBoolean(KEY_RAW_THUMBS, true))
     val chunkSize = MutableStateFlow(prefs.getInt(KEY_CHUNK, DEFAULT_CHUNK))
+    val keepAliveSeconds = MutableStateFlow(prefs.getInt(KEY_KEEPALIVE_SECONDS, 15))
+
+    fun setKeepAliveSeconds(seconds: Int) {
+        val safe = seconds.coerceIn(5, 120)
+        keepAliveSeconds.value = safe
+        prefs.edit().putInt(KEY_KEEPALIVE_SECONDS, safe).apply()
+    }
 
     var lastSsid: String
         get() = prefs.getString(KEY_SSID, "") ?: ""
@@ -80,6 +87,7 @@ class SettingsStore(context: Context) {
         private const val KEY_KEEP_ALIVE = "keep_alive"
         private const val KEY_RAW_THUMBS = "raw_thumbs"
         private const val KEY_CHUNK = "chunk_size"
+        private const val KEY_KEEPALIVE_SECONDS = "keepalive_seconds"
         private const val KEY_SSID = "last_ssid"
         private const val KEY_PASS = "last_pass"
         private const val KEY_HOST = "last_host"

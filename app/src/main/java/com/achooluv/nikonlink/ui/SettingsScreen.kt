@@ -45,6 +45,7 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     val settings = repo.settings
     val autoPull by settings.autoPull.collectAsStateWithLifecycle()
     val keepAlive by settings.keepAlive.collectAsStateWithLifecycle()
+    val keepAliveSeconds by settings.keepAliveSeconds.collectAsStateWithLifecycle()
     val rawThumbs by settings.showRawThumbnails.collectAsStateWithLifecycle()
     val chunk by settings.chunkSize.collectAsStateWithLifecycle()
     val eventsSupported by repo.eventsSupported.collectAsStateWithLifecycle()
@@ -117,10 +118,43 @@ fun SettingsScreen(repo: NikonLinkRepository) {
         NikonCard {
             SettingSwitch(
                 title = "保持连接活跃",
-                subtitle = "每 15 秒发一次轻量心跳，掉线后自动重连（指数退避，最长 30 秒一次）。",
+                subtitle = "定期发一次轻量心跳，掉线后自动重连（指数退避，最长 30 秒一次）。信号弱时把间隔调大更省电。",
                 checked = keepAlive,
-                onCheckedChange = { settings.setKeepAlive(it) },
+                onCheckedChange = {
+                    settings.setKeepAlive(it)
+                    repo.restartKeepAlive()
+                },
             )
+            if (keepAlive) {
+                Spacer(Modifier.height(10.dp))
+                Caption("心跳间隔")
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(10, 15, 30, 60).forEach { seconds ->
+                        FilterChip(
+                            selected = keepAliveSeconds == seconds,
+                            onClick = {
+                                settings.setKeepAliveSeconds(seconds)
+                                repo.restartKeepAlive()
+                            },
+                            label = { Text("${seconds}s", fontSize = 12.sp) },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = Ink,
+                                labelColor = PaperDim,
+                                selectedContainerColor = NikonYellow,
+                                selectedLabelColor = Color(0xFF161200),
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = keepAliveSeconds == seconds,
+                                borderColor = NikonLinkTheme.colors.line,
+                                selectedBorderColor = NikonYellow,
+                            ),
+                        )
+                    }
+                }
+            }
             HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 14.dp))
             SettingSwitch(
                 title = "RAW 使用相机缩略图",

@@ -44,6 +44,7 @@ class Downloader(
         val message: String? = null,
         val doneCount: Int = 0,
         val failedCount: Int = 0,
+        val lastUri: String? = null,
     ) {
         val fileFraction: Float
             get() = if (fileSize <= 0) 0f else (fileBytes.toFloat() / fileSize).coerceIn(0f, 1f)
@@ -51,6 +52,13 @@ class Downloader(
         val totalFraction: Float
             get() = if (totalSize <= 0) 0f else (totalBytes.toFloat() / totalSize).coerceIn(0f, 1f)
     }
+
+    /** Outcome of a batch: how many landed, which ones failed, and where the last one went. */
+    data class Result(
+        val done: Int,
+        val failed: List<CameraFile>,
+        val lastUri: String?,
+    )
 
     private fun incomingDir(): File {
         val base = context.getExternalFilesDir(null) ?: context.filesDir
@@ -74,11 +82,11 @@ class Downloader(
         force: Boolean = false,
         supportsPartial: Boolean = true,
         onProgress: (Progress) -> Unit,
-    ) = withContext(Dispatchers.IO) {
+    ): Result = withContext(Dispatchers.IO) {
         val queue = files.filter { force || !settings.isImported(it.handle, it.size) }
         if (queue.isEmpty()) {
             onProgress(Progress(active = false, message = "没有需要下载的文件", doneCount = 0))
-            return@withContext
+            return@withContext Result(0, emptyList(), null)
         }
 
         var totalBytes = 0L
@@ -88,6 +96,8 @@ class Downloader(
         var lastBytes = 0L
         var doneCount = 0
         var failedCount = 0
+        var lastUri: String? = null
+        val failedFiles = ArrayList<CameraFile>()
 
         queue.forEachIndexed { index, file ->
             coroutineContext.ensureActive()
@@ -190,7 +200,7 @@ class Downloader(
                 }
 
                 // Publish to the system gallery (Pictures/Movies → NikonLink).
-                publish(file, part)
+                lastUri = publish(file, part).toString()
                 part.delete()
                 settings.markImported(file.handle, file.size)
                 doneCount++
@@ -200,6 +210,7 @@ class Downloader(
                 throw cancel
             } catch (e: Exception) {
                 failedCount++
+                failedFiles += file
                 message = describe(e)
                 Diagnostics.log("失败 ${file.name}：$message")
                 emit()
@@ -213,12 +224,14 @@ class Downloader(
                 failedCount = failedCount,
                 totalBytes = totalBytes,
                 totalSize = totalSize,
+                lastUri = lastUri,
                 message = when {
                     failedCount > 0 -> "完成 $doneCount 个，失败 $failedCount 个（已保留断点，可重试）"
                     else -> "已下载 $doneCount 个文件"
                 },
             ),
         )
+        Result(doneCount, failedFiles, lastUri)
     }
 
     private fun describe(e: Exception): String = when (e) {

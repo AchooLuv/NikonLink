@@ -63,6 +63,7 @@ import com.achooluv.nikonlink.NikonLinkRepository
 import com.achooluv.nikonlink.camera.CameraFile
 import com.achooluv.nikonlink.camera.FileKind
 import com.achooluv.nikonlink.camera.formatBytes
+import com.achooluv.nikonlink.camera.formatEta
 import com.achooluv.nikonlink.camera.formatSpeed
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -126,6 +127,8 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val queue by repo.transferQueue.collectAsStateWithLifecycle()
     val queueBusy by repo.queueBusy.collectAsStateWithLifecycle()
     val queueSupported by repo.queueSupported.collectAsStateWithLifecycle()
+    val failed by repo.failedFiles.collectAsStateWithLifecycle()
+    val lastUri by repo.lastUri.collectAsStateWithLifecycle()
 
     var filter by remember { mutableStateOf(LibraryFilter.ALL) }
     var selection by remember { mutableStateOf(setOf<Int>()) }
@@ -215,16 +218,23 @@ fun BrowseScreen(repo: NikonLinkRepository) {
             }
         }
 
-        if (progress.active || progress.message != null) {
+        if (progress.active) {
             DownloadBanner(
                 name = progress.fileName,
                 fraction = progress.totalFraction,
                 speed = progress.speed,
+                eta = formatEta(progress.totalSize - progress.totalBytes, progress.speed),
                 index = progress.index,
                 count = progress.count,
-                active = progress.active,
-                message = progress.message,
                 onCancel = { repo.cancelDownloads() },
+            )
+        } else if (progress.message != null && (progress.doneCount > 0 || failed.size > 0)) {
+            TransferResultBar(
+                message = progress.message ?: "",
+                failed = failed.size,
+                galleryUri = lastUri,
+                onRetry = { repo.retryFailed() },
+                onDismiss = { repo.clearTransferResult() },
             )
         }
 
@@ -447,10 +457,9 @@ private fun DownloadBanner(
     name: String,
     fraction: Float,
     speed: Long,
+    eta: String,
     index: Int,
     count: Int,
-    active: Boolean,
-    message: String?,
     onCancel: () -> Unit,
 ) {
     Column(
@@ -464,31 +473,76 @@ private fun DownloadBanner(
             Column(Modifier.weight(1f)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
-                        if (active) name else "传输已结束",
+                        name,
                         color = Paper,
                         fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    if (active) {
-                        Text("$index / $count", color = PaperDim, fontSize = 11.sp)
-                    }
+                    Text("$index / $count", color = PaperDim, fontSize = 11.sp)
                 }
                 Spacer(Modifier.height(8.dp))
-                ThinProgress(if (active) fraction else 1f)
+                ThinProgress(fraction)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    message ?: "${(fraction * 100).toInt()}% · ${formatSpeed(speed)}",
+                    buildString {
+                        append("${(fraction * 100).toInt()}% · ${formatSpeed(speed)}")
+                        if (eta.isNotBlank()) append(" · 剩余 $eta")
+                    },
                     color = NikonLinkTheme.colors.dim,
                     fontSize = 10.5.sp,
                 )
             }
-            if (active) {
-                IconButton(onClick = onCancel) {
-                    Icon(Icons.Rounded.Close, contentDescription = "取消", tint = PaperDim, modifier = Modifier.size(18.dp))
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Rounded.Close, contentDescription = "取消", tint = PaperDim, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun TransferResultBar(
+    message: String,
+    failed: Int,
+    galleryUri: String?,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .background(InkCard, RoundedCornerShape(16.dp))
+            .padding(14.dp),
+    ) {
+        Text(message, color = Paper, fontSize = 12.sp, lineHeight = 17.sp)
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (galleryUri != null) {
+                TextButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(galleryUri),
+                                ),
+                            )
+                        }
+                    },
+                ) {
+                    Text("打开相册", color = NikonYellow, fontSize = 12.sp)
                 }
             }
+            if (failed > 0) {
+                TextButton(onClick = onRetry) {
+                    Text("重试失败项 ($failed)", color = Mint, fontSize = 12.sp)
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onDismiss) { Text("关闭", color = PaperDim, fontSize = 12.sp) }
         }
     }
 }
