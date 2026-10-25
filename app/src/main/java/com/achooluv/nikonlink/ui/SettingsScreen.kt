@@ -5,8 +5,11 @@ package com.achooluv.nikonlink.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -85,29 +89,32 @@ fun SettingsScreen(repo: NikonLinkRepository) {
             HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 14.dp))
             Caption("分块大小")
             Spacer(Modifier.height(8.dp))
-            androidx.compose.foundation.layout.FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            // Four equal segments: never wraps, even on narrow screens or large fonts.
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SettingsStore.CHUNK_CHOICES.forEach { size ->
-                    FilterChip(
-                        selected = chunk == size,
-                        onClick = { settings.setChunkSize(size) },
-                        label = { Text(SettingsStore.chunkLabel(size), fontSize = 13.sp) },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = FilterChipDefaults.filterChipColors(
-                            containerColor = Ink,
-                            labelColor = PaperDim,
-                            selectedContainerColor = NikonYellow,
-                            selectedLabelColor = Color(0xFF161200),
-                        ),
-                        border = FilterChipDefaults.filterChipBorder(
-                            enabled = true,
-                            selected = chunk == size,
-                            borderColor = NikonLinkTheme.colors.line,
-                            selectedBorderColor = NikonYellow,
-                        ),
-                    )
+                    val selected = chunk == size
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(38.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(if (selected) NikonYellow else Ink)
+                            .border(
+                                width = 1.dp,
+                                color = if (selected) NikonYellow else NikonLinkTheme.colors.line,
+                                shape = RoundedCornerShape(11.dp),
+                            )
+                            .clickable { settings.setChunkSize(size) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = SettingsStore.chunkLabel(size),
+                            color = if (selected) Color(0xFF161200) else PaperDim,
+                            fontSize = 12.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))
