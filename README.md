@@ -86,12 +86,18 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 ```bash
 # JDK 17 + Android SDK 35
 ./gradlew :app:assembleRelease      # 产物：app/build/outputs/apk/release/app-release.apk
-./gradlew :app:testDebugUnitTest    # 27 项测试，含进程内假相机的 PTP/IP 回环测试
+./gradlew :app:testDebugUnitTest    # 30 项测试，含进程内假相机的 PTP/IP 回环测试
 ```
 
 `keystore/nikonlink-release.jks` 为发布签名（口令写在 `app/build.gradle.kts`），用于让后续版本可以覆盖安装。
 
 ## 更新日志
+
+**v0.1.7**
+- 断线重连会重新申请相机 Wi-Fi：手机漂回蜂窝网络后不再永远连不上
+- 重连前先探测相机端口，不可达就立刻进入下一次退避，不再每次空等 12 秒超时
+- 重连成功后自动重新解析相机地址并刷新相册；传输完成也会刷新存储余量
+- 新增退避策略单测，测试总数 30
 
 **v0.1.6**
 - RAW 配对下载：选中 NEF 时自动带上同名 JPEG（设置里可关）

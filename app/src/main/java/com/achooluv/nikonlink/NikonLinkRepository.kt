@@ -37,6 +37,12 @@ sealed interface ConnState {
     data class Error(val message: String) : ConnState
 }
 
+/** Exponential backoff (seconds) used while re-establishing a dropped link. */
+internal fun reconnectDelaySeconds(attempt: Int): Int {
+    val schedule = intArrayOf(1, 2, 4, 8, 16, 30)
+    return schedule[(attempt - 1).coerceIn(0, schedule.lastIndex)]
+}
+
 /**
  * Single source of truth for the camera link, the library and transfers.
  * Lives for the whole process so the PTP/IP session survives configuration
@@ -264,20 +270,34 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     private suspend fun reconnectLoop(cause: Throwable) {
-        val backoff = listOf(1, 2, 4, 8, 16, 30)
         for (attempt in 1..30) {
             if (userDisconnected) return
-            val wait = backoff[(attempt - 1).coerceAtMost(backoff.lastIndex)]
+            val wait = reconnectDelaySeconds(attempt)
             _state.value = ConnState.Reconnecting(attempt, wait)
             delay(wait * 1000L)
             if (userDisconnected) return
             _state.value = ConnState.Connecting("正在重新连接（第 $attempt 次）…")
             try {
                 client.close()
-                client.connect(currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST })
+
+                // The phone may have roamed back to cellular, which would leave the
+                // camera AP unreachable forever. Re-request the network, then probe
+                // before spending 12 s on a doomed TCP connect.
+                val network = ensureCameraNetwork()
+                if (network != null) client.socketFactory = network.socketFactory
+
+                val host = resolveHost(network) ?: currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST }
+                if (!CameraDiscovery.probe(host, Ptp.PORT, network, 1500)) {
+                    Diagnostics.log("重连第 $attempt 次：$host 不可达")
+                    continue
+                }
+                client.connect(host)
+                currentHost = host
+
                 val info = client.deviceInfo()
                 _state.value = ConnState.Connected(info.model.ifBlank { "Nikon 相机" })
                 ConnectionService.update(app, "已重新连接 ${info.model.ifBlank { "Nikon 相机" }}")
+                Diagnostics.log("重连成功：$host")
                 startKeepAlive()
                 refreshLibrary()
                 return
@@ -289,6 +309,30 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
         _state.value = ConnState.Error("连接已断开：${humanError(cause)}")
         ConnectionService.stop(app)
+    }
+
+    /**
+     * Re-joins the saved camera access point when the Wi-Fi association was lost,
+     * so reconnects work even after the phone fell back to mobile data.
+     */
+    private suspend fun ensureCameraNetwork(): Network? {
+        wifi.network?.let { return it }
+        val ssid = settings.lastSsid
+        if (ssid.isBlank()) return null
+        if (wifi.looksLikeCamera(wifi.currentSsid())) {
+            return runCatching { wifi.requestNetwork(ssid, settings.lastPassphrase, 25_000) }.getOrNull()
+        }
+        Diagnostics.log("重新申请相机 Wi-Fi：$ssid")
+        return runCatching { wifi.requestNetwork(ssid, settings.lastPassphrase, 25_000) }
+            .onFailure { Diagnostics.log("重新申请 Wi-Fi 失败：${it.message}") }
+            .getOrNull()
+    }
+
+    /** Finds the camera again after a rejoin: saved host first, then the usual addresses. */
+    private suspend fun resolveHost(network: Network?): String? {
+        val candidates = candidateHosts(network)
+        candidates.firstOrNull { CameraDiscovery.probe(it, Ptp.PORT, network, 900) }?.let { return it }
+        return CameraDiscovery.find(Ptp.PORT, network, candidates, timeoutMs = 900)
     }
 
     // ---------------------------------------------------------------- library
@@ -439,6 +483,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 _failedFiles.value = result.failed
                 _lastUri.value = result.lastUri
                 _importsVersion.value++
+                refreshIdentityStorage()
             }
         }
     }
@@ -537,6 +582,14 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
         out += CameraDiscovery.defaults()
         return out.toList()
+    }
+
+    /** Refreshes free/total space after a batch moved files off the card. */
+    private fun refreshIdentityStorage() {
+        runCatching {
+            val (free, total) = readStorage()
+            _identity.value = _identity.value?.copy(storageFree = free, storageTotal = total)
+        }
     }
 
     fun humanError(e: Throwable): String = when (e) {
