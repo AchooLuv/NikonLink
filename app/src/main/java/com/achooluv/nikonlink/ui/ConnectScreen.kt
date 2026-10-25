@@ -71,6 +71,7 @@ fun ConnectScreen(
     val profile by repo.profile.collectAsStateWithLifecycle()
     val settings = repo.settings
     val chunkSize by settings.chunkSize.collectAsStateWithLifecycle()
+    val extras by repo.extras.collectAsStateWithLifecycle()
 
     var manualDialog by remember { mutableStateOf(false) }
     val connected = state is ConnState.Connected
@@ -229,6 +230,9 @@ fun ConnectScreen(
                     Spacer(Modifier.height(14.dp))
                     InfoRow("固件", id.firmware.ifBlank { "—" })
                     InfoRow("序列号", id.serial.ifBlank { "—" })
+                    extras?.lens?.let { InfoRow("镜头", it) }
+                    extras?.exposure?.let { InfoRow("光圈/焦距", it) }
+                    extras?.shutterCount?.let { InfoRow("快门数", "%,d".format(it)) }
                     InfoRow("传输分块", SettingsStore.chunkLabel(chunkSize))
                     InfoRow(
                         "断点续传",

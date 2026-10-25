@@ -12,8 +12,8 @@ android {
         applicationId = "com.achooluv.nikonlink"
         minSdk = 29
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.1.8"
+        versionCode = 10
+        versionName = "0.1.9"
 
         // NikonLink ships for arm64 devices only. Pass -Parm64Only=false to build a
         // host-ABI test APK for an x86_64 emulator.

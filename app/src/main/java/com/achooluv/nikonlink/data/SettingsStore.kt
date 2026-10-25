@@ -88,6 +88,18 @@ class SettingsStore(context: Context) {
         }
     }
 
+    /** Drops every stored preference and import record (the "reset" button). */
+    fun clearAll() {
+        prefs.edit().clear().apply()
+        imports.edit().clear().apply()
+        autoPull.value = false
+        keepAlive.value = true
+        showRawThumbnails.value = true
+        pairJpeg.value = true
+        chunkSize.value = DEFAULT_CHUNK
+        keepAliveSeconds.value = 15
+    }
+
     companion object {
         private const val KEY_AUTO_PULL = "auto_pull"
         private const val KEY_KEEP_ALIVE = "keep_alive"

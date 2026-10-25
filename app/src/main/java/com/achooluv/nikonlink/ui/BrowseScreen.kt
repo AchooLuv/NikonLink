@@ -123,13 +123,10 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val files by repo.files.collectAsStateWithLifecycle()
     val busy by repo.libraryBusy.collectAsStateWithLifecycle()
     val hasMore by repo.hasMore.collectAsStateWithLifecycle()
-    val progress by repo.progress.collectAsStateWithLifecycle()
     val importsRev by repo.importsVersion.collectAsStateWithLifecycle()
     val queue by repo.transferQueue.collectAsStateWithLifecycle()
     val queueBusy by repo.queueBusy.collectAsStateWithLifecycle()
     val queueSupported by repo.queueSupported.collectAsStateWithLifecycle()
-    val failed by repo.failedFiles.collectAsStateWithLifecycle()
-    val lastUri by repo.lastUri.collectAsStateWithLifecycle()
 
     var filter by remember { mutableStateOf(LibraryFilter.ALL) }
     var selection by remember { mutableStateOf(setOf<Int>()) }
@@ -226,25 +223,9 @@ fun BrowseScreen(repo: NikonLinkRepository) {
             }
         }
 
-        if (progress.active) {
-            DownloadBanner(
-                name = progress.fileName,
-                fraction = progress.totalFraction,
-                speed = progress.speed,
-                eta = formatEta(progress.totalSize - progress.totalBytes, progress.speed),
-                index = progress.index,
-                count = progress.count,
-                onCancel = { repo.cancelDownloads() },
-            )
-        } else if (progress.message != null && (progress.doneCount > 0 || failed.size > 0)) {
-            TransferResultBar(
-                message = progress.message ?: "",
-                failed = failed.size,
-                galleryUri = lastUri,
-                onRetry = { repo.retryFailed() },
-                onDismiss = { repo.clearTransferResult() },
-            )
-        }
+        // Collected in its own leaf so chunk-level progress updates never recompose
+        // the grid (that was the main source of scroll jank).
+        TransferStatusArea(repo)
 
         Box(Modifier.weight(1f)) {
             if (!connected) {
@@ -457,6 +438,33 @@ private fun SelectionBar(
                 Text("下载", fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
         }
+    }
+}
+
+@Composable
+private fun TransferStatusArea(repo: NikonLinkRepository) {
+    val progress by repo.progress.collectAsStateWithLifecycle()
+    val failed by repo.failedFiles.collectAsStateWithLifecycle()
+    val lastUri by repo.lastUri.collectAsStateWithLifecycle()
+
+    if (progress.active) {
+        DownloadBanner(
+            name = progress.fileName,
+            fraction = progress.totalFraction,
+            speed = progress.speed,
+            eta = formatEta(progress.totalSize - progress.totalBytes, progress.speed),
+            index = progress.index,
+            count = progress.count,
+            onCancel = { repo.cancelDownloads() },
+        )
+    } else if (progress.message != null && (progress.doneCount > 0 || failed.isNotEmpty())) {
+        TransferResultBar(
+            message = progress.message ?: "",
+            failed = failed.size,
+            galleryUri = lastUri,
+            onRetry = { repo.retryFailed() },
+            onDismiss = { repo.clearTransferResult() },
+        )
     }
 }
 

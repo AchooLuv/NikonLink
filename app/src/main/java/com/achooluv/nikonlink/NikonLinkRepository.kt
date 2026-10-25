@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.IOException
 
 /** Connection lifecycle as the UI sees it. */
@@ -36,6 +37,13 @@ sealed interface ConnState {
     data class Reconnecting(val attempt: Int, val waitSeconds: Int) : ConnState
     data class Error(val message: String) : ConnState
 }
+
+/** Metadata pulled from the newest photo on the card. */
+data class CameraExtras(
+    val lens: String? = null,
+    val exposure: String? = null,
+    val shutterCount: Int? = null,
+)
 
 /** Exponential backoff (seconds) used while re-establishing a dropped link. */
 internal fun reconnectDelaySeconds(attempt: Int): Int {
@@ -94,6 +102,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val _lastUri = MutableStateFlow<String?>(null)
     val lastUri: StateFlow<String?> = _lastUri
 
+    /** Lens / exposure / shutter count read from the newest photo's EXIF header. */
+    private val _extras = MutableStateFlow<CameraExtras?>(null)
+    val extras: StateFlow<CameraExtras?> = _extras
+
     private val thumbnailCache = object : LruCache<Int, ByteArray>(8 * 1024 * 1024) {
         override fun sizeOf(key: Int, value: ByteArray): Int = value.size
     }
@@ -102,6 +114,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val downloadMutex = Mutex()
 
     private var thumbLargeUnsupported = false
+    private var extrasLoaded = false
     private var allHandles: List<Int> = emptyList()
     private val kindByHandle = HashMap<Int, com.achooluv.nikonlink.camera.FileKind>()
     private var loadedPages = 0
@@ -110,6 +123,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private var downloadJob: Job? = null
     private var userDisconnected = false
     private var currentHost: String = ""
+
+    /** Set while we deliberately close a link, so the disconnect hook stays quiet. */
+    @Volatile
+    private var suppressDisconnect = false
 
     init {
         client.onEvent = { event -> handleEvent(event) }
@@ -128,7 +145,14 @@ class NikonLinkRepository private constructor(private val app: Application) {
         connectJob = scope.launch {
             try {
                 _state.value = ConnState.Connecting("正在准备连接…")
-                client.close()
+                // Closing a live link fires onDisconnected synchronously; swallow it
+                // so it cannot spawn a competing reconnect loop.
+                suppressDisconnect = true
+                runCatching { client.close() }
+                suppressDisconnect = false
+                // A socket factory captured from an old Network keeps dialing a dead
+                // route (the "must clear app data to reconnect" bug) — always reset.
+                client.socketFactory = javax.net.SocketFactory.getDefault()
                 wifi.release()
 
                 var network: Network? = null
@@ -172,6 +196,8 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 _files.value = emptyList()
                 kindByHandle.clear()
                 thumbnailCache.evictAll()
+                extrasLoaded = false
+                _extras.value = null
 
                 val storage = readStorage()
                 _identity.value = CameraIdentity(
@@ -207,6 +233,24 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
+    /** Wipes every local preference and record, then drops the link. */
+    fun resetAll() {
+        disconnect()
+        scope.launch {
+            delay(250)
+            settings.clearAll()
+            runCatching {
+                val base = app.getExternalFilesDir(null) ?: app.filesDir
+                java.io.File(base, "incoming").deleteRecursively()
+            }
+            _failedFiles.value = emptyList()
+            _lastUri.value = null
+            _progress.value = Downloader.Progress()
+            _queue.value = emptyList()
+            Diagnostics.log("已重置本地连接与下载记录")
+        }
+    }
+
     /** Aggregates free/total bytes across every card the body exposes. */
     private fun readStorage(): Pair<Long?, Long?> {
         return runCatching {
@@ -229,8 +273,11 @@ class NikonLinkRepository private constructor(private val app: Application) {
         connectJob?.cancel()
         keepAliveJob?.cancel()
         ConnectionService.stop(app)
+        suppressDisconnect = true
+        runCatching { client.close() }
+        suppressDisconnect = false
+        client.socketFactory = javax.net.SocketFactory.getDefault()
         scope.launch {
-            runCatching { client.close() }
             wifi.release()
             _state.value = ConnState.Idle
             _identity.value = null
@@ -238,6 +285,8 @@ class NikonLinkRepository private constructor(private val app: Application) {
             allHandles = emptyList()
             kindByHandle.clear()
             thumbnailCache.evictAll()
+            extrasLoaded = false
+            _extras.value = null
         }
     }
 
@@ -264,6 +313,8 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     private fun handleLinkLost(error: Throwable) {
+        if (suppressDisconnect) return
+        if (connectJob?.isActive == true) return
         if (userDisconnected) {
             _state.value = ConnState.Idle
             return
@@ -287,7 +338,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 // camera AP unreachable forever. Re-request the network, then probe
                 // before spending 12 s on a doomed TCP connect.
                 val network = ensureCameraNetwork()
-                if (network != null) client.socketFactory = network.socketFactory
+                client.socketFactory = network?.socketFactory ?: javax.net.SocketFactory.getDefault()
 
                 val host = resolveHost(network) ?: currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST }
                 if (!CameraDiscovery.probe(host, Ptp.PORT, network, 1500)) {
@@ -396,6 +447,30 @@ class NikonLinkRepository private constructor(private val app: Application) {
         loadedPages++
         _files.value = _files.value + loaded
         _hasMore.value = loadedPages * pageSize < allHandles.size
+
+        if (!extrasLoaded && loaded.isNotEmpty()) {
+            extrasLoaded = true
+            runCatching { loadExtras() }
+        }
+    }
+
+    /**
+     * Reads the first 256 KiB of the newest photo and decodes lens / exposure /
+     * shutter count from its EXIF, without downloading the whole file.
+     */
+    private suspend fun loadExtras() {
+        val candidate = _files.value.firstOrNull { it.kind == com.achooluv.nikonlink.camera.FileKind.JPEG }
+            ?: _files.value.firstOrNull { it.kind == com.achooluv.nikonlink.camera.FileKind.RAW }
+            ?: return
+        val head = runCatching { client.readHead(candidate.handle, 256 * 1024) }.getOrNull() ?: return
+        val exif = com.achooluv.nikonlink.exif.ExifReader.read(head)
+        if (!exif.hasAnything) return
+        _extras.value = CameraExtras(
+            lens = exif.lensModel,
+            exposure = listOfNotNull(exif.aperture, exif.focalLength).joinToString(" · ").ifBlank { null },
+            shutterCount = exif.shutterCount,
+        )
+        Diagnostics.log("EXIF 镜头=${exif.lensModel} 快门=${exif.shutterCount}")
     }
 
     // ------------------------------------------------------ camera-marked queue
@@ -457,23 +532,26 @@ class NikonLinkRepository private constructor(private val app: Application) {
             return null
         }
         thumbnailCache.get(handle)?.let { return it }
-        thumbMutex.withLock {
-            thumbnailCache.get(handle)?.let { return it }
-            if (_state.value !is ConnState.Connected) return null
-            val bytes = runCatching {
-                if (!thumbLargeUnsupported) {
-                    try {
-                        client.largeThumbnail(handle)
-                    } catch (e: com.achooluv.nikonlink.ptp.PtpException) {
-                        thumbLargeUnsupported = true
+        // PTP I/O is blocking; never run it on the caller's (main) dispatcher.
+        return withContext(Dispatchers.IO) {
+            thumbMutex.withLock {
+                thumbnailCache.get(handle)?.let { return@withLock it }
+                if (_state.value !is ConnState.Connected) return@withLock null
+                val bytes = runCatching {
+                    if (!thumbLargeUnsupported) {
+                        try {
+                            client.largeThumbnail(handle)
+                        } catch (e: com.achooluv.nikonlink.ptp.PtpException) {
+                            thumbLargeUnsupported = true
+                            client.thumbnail(handle)
+                        }
+                    } else {
                         client.thumbnail(handle)
                     }
-                } else {
-                    client.thumbnail(handle)
-                }
-            }.getOrElse { null }
-            if (bytes != null && bytes.isNotEmpty()) thumbnailCache.put(handle, bytes)
-            return bytes
+                }.getOrElse { null }
+                if (bytes != null && bytes.isNotEmpty()) thumbnailCache.put(handle, bytes)
+                bytes
+            }
         }
     }
 

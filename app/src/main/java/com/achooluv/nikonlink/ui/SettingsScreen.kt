@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.achooluv.nikonlink.ui
 
 import android.content.Intent
@@ -53,6 +55,7 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     val context = LocalContext.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     var confirmClear by remember { mutableStateOf(false) }
+    var confirmReset by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -82,7 +85,10 @@ fun SettingsScreen(repo: NikonLinkRepository) {
             HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 14.dp))
             Caption("分块大小")
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 SettingsStore.CHUNK_CHOICES.forEach { size ->
                     FilterChip(
                         selected = chunk == size,
@@ -192,6 +198,13 @@ fun SettingsScreen(repo: NikonLinkRepository) {
                 fontSize = 13.sp,
                 modifier = Modifier.clickable { confirmClear = true }.padding(vertical = 4.dp),
             )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "重置连接与全部记录",
+                color = PaperDim,
+                fontSize = 13.sp,
+                modifier = Modifier.clickable { confirmReset = true }.padding(vertical = 4.dp),
+            )
         }
 
         Spacer(Modifier.height(20.dp))
@@ -271,6 +284,32 @@ fun SettingsScreen(repo: NikonLinkRepository) {
         }
 
         Spacer(Modifier.height(40.dp))
+    }
+
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            containerColor = InkRaised,
+            title = { Text("重置连接与记录？", color = Paper, fontSize = 16.sp) },
+            text = {
+                Text(
+                    "会断开当前连接，并清空保存的 SSID/密码、偏好设置和「已下载」记录，同时删除未完成的断点文件。" +
+                        "不会删除相册里已经下载好的照片。",
+                    color = PaperDim,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmReset = false
+                    repo.resetAll()
+                }) { Text("重置", color = NikonYellow) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmReset = false }) { Text("取消", color = PaperDim) }
+            },
+        )
     }
 
     if (confirmClear) {

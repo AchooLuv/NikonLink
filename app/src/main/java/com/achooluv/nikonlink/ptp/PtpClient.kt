@@ -392,6 +392,20 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         return written
     }
 
+    /**
+     * Streams the first [maxBytes] of an object. EXIF sits at the head of JPEG/NEF,
+     * so this reads camera/lens metadata without pulling a whole RAW.
+     */
+    fun readHead(handle: Int, maxBytes: Int): ByteArray {
+        val out = ByteArrayOutputStream(maxBytes)
+        transaction(Ptp.OP_GET_PARTIAL_OBJECT, intArrayOf(handle, 0, maxBytes), null) { input, count ->
+            val buffer = ByteArray(count)
+            input.readFully(buffer, 0, count)
+            out.write(buffer, 0, count)
+        }
+        return out.toByteArray()
+    }
+
     /** Cheap round-trip that keeps the idle link warm. */
     fun keepAlive() {
         storageIds()
