@@ -1,0 +1,404 @@
+package com.achooluv.nikonlink
+
+import android.app.Application
+import android.net.Network
+import android.util.LruCache
+import com.achooluv.nikonlink.camera.CameraFile
+import com.achooluv.nikonlink.camera.CameraIdentity
+import com.achooluv.nikonlink.camera.CameraProfile
+import com.achooluv.nikonlink.data.SettingsStore
+import com.achooluv.nikonlink.net.CameraWifi
+import com.achooluv.nikonlink.ptp.Ptp
+import com.achooluv.nikonlink.ptp.PtpEvent
+import com.achooluv.nikonlink.ptp.PtpIpClient
+import com.achooluv.nikonlink.service.ConnectionService
+import com.achooluv.nikonlink.transfer.CameraDiscovery
+import com.achooluv.nikonlink.transfer.Downloader
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.IOException
+
+/** Connection lifecycle as the UI sees it. */
+sealed interface ConnState {
+    data object Idle : ConnState
+    data class Connecting(val step: String) : ConnState
+    data class Connected(val model: String) : ConnState
+    data class Reconnecting(val attempt: Int, val waitSeconds: Int) : ConnState
+    data class Error(val message: String) : ConnState
+}
+
+/**
+ * Single source of truth for the camera link, the library and transfers.
+ * Lives for the whole process so the PTP/IP session survives configuration
+ * changes and activity restarts.
+ */
+class NikonLinkRepository private constructor(private val app: Application) {
+
+    val settings = SettingsStore(app)
+    val wifi = CameraWifi(app)
+    private val downloader = Downloader(app, settings)
+    private val client = PtpIpClient("NikonLink/${BuildConfig.VERSION_NAME} (Android)")
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val _state = MutableStateFlow<ConnState>(ConnState.Idle)
+    val state: StateFlow<ConnState> = _state
+
+    private val _identity = MutableStateFlow<CameraIdentity?>(null)
+    val identity: StateFlow<CameraIdentity?> = _identity
+
+    private val _profile = MutableStateFlow<CameraProfile?>(null)
+    val profile: StateFlow<CameraProfile?> = _profile
+
+    private val _files = MutableStateFlow<List<CameraFile>>(emptyList())
+    val files: StateFlow<List<CameraFile>> = _files
+
+    private val _libraryBusy = MutableStateFlow(false)
+    val libraryBusy: StateFlow<Boolean> = _libraryBusy
+
+    private val _hasMore = MutableStateFlow(false)
+    val hasMore: StateFlow<Boolean> = _hasMore
+
+    private val _progress = MutableStateFlow(Downloader.Progress())
+    val progress: StateFlow<Downloader.Progress> = _progress
+
+    private val thumbnailCache = object : LruCache<Int, ByteArray>(8 * 1024 * 1024) {
+        override fun sizeOf(key: Int, value: ByteArray): Int = value.size
+    }
+
+    private val thumbMutex = Mutex()
+    private val downloadMutex = Mutex()
+
+    private var thumbLargeUnsupported = false
+    private var allHandles: List<Int> = emptyList()
+    private var loadedPages = 0
+    private var connectJob: Job? = null
+    private var keepAliveJob: Job? = null
+    private var userDisconnected = false
+    private var currentHost: String = ""
+
+    init {
+        client.onEvent = { event -> handleEvent(event) }
+        client.onDisconnected = { error -> handleLinkLost(error) }
+    }
+
+    // ------------------------------------------------------------- connection
+
+    /**
+     * Joins the camera AP (when [ssid] is given), locates the PTP/IP responder and
+     * opens a session. Safe to call again to retry.
+     */
+    fun connect(ssid: String? = null, passphrase: String? = null, host: String? = null) {
+        connectJob?.cancel()
+        userDisconnected = false
+        connectJob = scope.launch {
+            try {
+                _state.value = ConnState.Connecting("正在准备连接…")
+                client.close()
+                wifi.release()
+
+                var network: Network? = null
+                val targetSsid = ssid?.takeIf { it.isNotBlank() } ?: settings.lastSsid
+                val targetPass = passphrase ?: settings.lastPassphrase
+
+                if (targetSsid.isNotBlank() && !wifi.looksLikeCamera(wifi.currentSsid())) {
+                    _state.value = ConnState.Connecting("正在加入相机 Wi-Fi…")
+                    network = wifi.requestNetwork(targetSsid, targetPass)
+                } else if (wifi.looksLikeCamera(wifi.currentSsid())) {
+                    network = wifi.network
+                }
+
+                if (network != null) client.socketFactory = network.socketFactory
+
+                _state.value = ConnState.Connecting("正在查找相机…")
+                val resolved = host?.takeIf { it.isNotBlank() }
+                    ?: settings.lastHost.takeIf { it.isNotBlank() && CameraDiscovery.probe(it, Ptp.PORT, network, 1200) }
+                    ?: CameraDiscovery.find(Ptp.PORT, network)
+                    ?: CameraWifi.DEFAULT_CAMERA_HOST
+
+                _state.value = ConnState.Connecting("正在建立 PTP/IP 会话…")
+                client.connect(resolved)
+
+                _state.value = ConnState.Connecting("正在读取相机信息…")
+                val info = client.deviceInfo()
+                val profile = CameraProfile.forModel(info.model)
+                val partial = profile.supportsPartialObject && info.supports(Ptp.OP_GET_PARTIAL_OBJECT)
+
+                _profile.value = profile.copy(supportsPartialObject = partial)
+                currentHost = resolved
+                thumbLargeUnsupported = !profile.supportsLargeThumb
+                loadedPages = 0
+                allHandles = emptyList()
+                _files.value = emptyList()
+                thumbnailCache.evictAll()
+
+                _identity.value = CameraIdentity(
+                    model = info.model.ifBlank { "Nikon 相机" },
+                    manufacturer = info.manufacturer,
+                    serial = info.serialNumber,
+                    firmware = info.deviceVersion,
+                    battery = runCatching { client.batteryLevel() }.getOrNull(),
+                    storageFree = null,
+                    storageTotal = null,
+                )
+
+                if (targetSsid.isNotBlank()) {
+                    settings.lastSsid = targetSsid
+                    settings.lastPassphrase = targetPass
+                }
+                settings.lastHost = resolved
+
+                _state.value = ConnState.Connected(info.model.ifBlank { "Nikon 相机" })
+                ConnectionService.start(app, "已连接 ${info.model.ifBlank { "Nikon 相机" }} · 可传输")
+                startKeepAlive()
+                refreshLibrary()
+                if (settings.autoPull.value) syncAutoPullBaseline()
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (e: Exception) {
+                _state.value = ConnState.Error(humanError(e))
+                ConnectionService.stop(app)
+                client.close()
+            }
+        }
+    }
+
+    fun disconnect() {
+        userDisconnected = true
+        connectJob?.cancel()
+        keepAliveJob?.cancel()
+        ConnectionService.stop(app)
+        scope.launch {
+            runCatching { client.close() }
+            wifi.release()
+            _state.value = ConnState.Idle
+            _identity.value = null
+            _files.value = emptyList()
+            allHandles = emptyList()
+            thumbnailCache.evictAll()
+        }
+    }
+
+    private fun startKeepAlive() {
+        keepAliveJob?.cancel()
+        if (!settings.keepAlive.value) return
+        keepAliveJob = scope.launch {
+            while (true) {
+                delay(15_000)
+                if (_state.value !is ConnState.Connected) break
+                val failure = runCatching { client.keepAlive() }.exceptionOrNull()
+                if (failure != null) {
+                    handleLinkLost(failure)
+                    break
+                }
+            }
+        }
+    }
+
+    private fun handleLinkLost(error: Throwable) {
+        if (userDisconnected) {
+            _state.value = ConnState.Idle
+            return
+        }
+        if (_state.value is ConnState.Reconnecting) return
+        scope.launch { reconnectLoop(error) }
+    }
+
+    private suspend fun reconnectLoop(cause: Throwable) {
+        val backoff = listOf(1, 2, 4, 8, 16, 30)
+        for (attempt in 1..30) {
+            if (userDisconnected) return
+            val wait = backoff[(attempt - 1).coerceAtMost(backoff.lastIndex)]
+            _state.value = ConnState.Reconnecting(attempt, wait)
+            delay(wait * 1000L)
+            if (userDisconnected) return
+            _state.value = ConnState.Connecting("正在重新连接（第 $attempt 次）…")
+            try {
+                client.close()
+                client.connect(currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST })
+                val info = client.deviceInfo()
+                _state.value = ConnState.Connected(info.model.ifBlank { "Nikon 相机" })
+                ConnectionService.update(app, "已重新连接 ${info.model.ifBlank { "Nikon 相机" }}")
+                startKeepAlive()
+                refreshLibrary()
+                return
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (_: Exception) {
+                // keep retrying
+            }
+        }
+        _state.value = ConnState.Error("连接已断开：${humanError(cause)}")
+        ConnectionService.stop(app)
+    }
+
+    // ---------------------------------------------------------------- library
+
+    fun refreshLibrary() {
+        scope.launch {
+            if (_state.value !is ConnState.Connected) return@launch
+            _libraryBusy.value = true
+            try {
+                val ids = client.storageIds()
+                val handles = ArrayList<Int>()
+                for (id in ids) {
+                    runCatching { client.objectHandles(id) }.onSuccess { handles += it.toList() }
+                }
+                allHandles = handles.distinct().sortedDescending()
+                loadedPages = 0
+                _files.value = emptyList()
+                loadPage()
+            } catch (e: Exception) {
+                // Keep the old list; surface nothing louder than a retry affordance.
+            } finally {
+                _libraryBusy.value = false
+            }
+        }
+    }
+
+    fun loadMore() {
+        scope.launch {
+            if (_libraryBusy.value) return@launch
+            _libraryBusy.value = true
+            try {
+                loadPage()
+            } finally {
+                _libraryBusy.value = false
+            }
+        }
+    }
+
+    private suspend fun loadPage() {
+        val pageSize = 120
+        val start = loadedPages * pageSize
+        if (start >= allHandles.size) {
+            _hasMore.value = false
+            return
+        }
+        val slice = allHandles.subList(start, minOf(start + pageSize, allHandles.size))
+        val loaded = ArrayList<CameraFile>(slice.size)
+        for (handle in slice) {
+            val info = runCatching { client.objectInfo(handle) }.getOrNull() ?: continue
+            if (info.isFolder) continue
+            val file = CameraFile.from(info, handle)
+            if (file.kind == com.achooluv.nikonlink.camera.FileKind.OTHER) continue
+            loaded += file
+        }
+        loadedPages++
+        _files.value = _files.value + loaded
+        _hasMore.value = loadedPages * pageSize < allHandles.size
+    }
+
+    /** Loads a JPEG preview for [handle]; returns null when the body has none. */
+    suspend fun thumbnail(handle: Int): ByteArray? {
+        thumbnailCache.get(handle)?.let { return it }
+        thumbMutex.withLock {
+            thumbnailCache.get(handle)?.let { return it }
+            if (_state.value !is ConnState.Connected) return null
+            val bytes = runCatching {
+                if (!thumbLargeUnsupported) {
+                    try {
+                        client.largeThumbnail(handle)
+                    } catch (e: com.achooluv.nikonlink.ptp.PtpException) {
+                        thumbLargeUnsupported = true
+                        client.thumbnail(handle)
+                    }
+                } else {
+                    client.thumbnail(handle)
+                }
+            }.getOrElse { null }
+            if (bytes != null && bytes.isNotEmpty()) thumbnailCache.put(handle, bytes)
+            return bytes
+        }
+    }
+
+    // -------------------------------------------------------------- transfers
+
+    fun download(files: List<CameraFile>, force: Boolean = false) {
+        if (files.isEmpty()) return
+        scope.launch {
+            downloadMutex.withLock {
+                val chunk = settings.chunkSize.value
+                val partial = _profile.value?.supportsPartialObject ?: true
+                downloader.download(client, files, chunk, force, partial) { p ->
+                    _progress.value = p
+                }
+            }
+        }
+    }
+
+    fun cancelDownloads() {
+        _progress.value = _progress.value.copy(message = "任务已在当前分块后停止")
+    }
+
+    // ----------------------------------------------------------------- events
+
+    private fun handleEvent(event: PtpEvent) {
+        if (event.code != Ptp.EVENT_OBJECT_ADDED) return
+        val handle = event.params.firstOrNull() ?: return
+        if (!settings.autoPull.value) return
+        if (_state.value !is ConnState.Connected) return
+        scope.launch {
+            // Give the camera a moment to finish writing the file.
+            delay(600)
+            repeat(3) { attempt ->
+                val info = runCatching { client.objectInfo(handle) }.getOrNull()
+                if (info != null && !info.isFolder && info.compressedSize > 0) {
+                    val file = CameraFile.from(info, handle)
+                    downloadMutex.withLock {
+                        downloader.download(
+                            client,
+                            listOf(file),
+                            settings.chunkSize.value,
+                            force = false,
+                            supportsPartial = _profile.value?.supportsPartialObject ?: true,
+                        ) { p -> _progress.value = p }
+                    }
+                    return@launch
+                }
+                delay(700L * (attempt + 1))
+            }
+        }
+    }
+
+    /**
+     * Marks everything currently on the card as "already seen" when auto-pull is
+     * switched on, so enabling it does not trigger a bulk download of the card.
+     */
+    private fun syncAutoPullBaseline() {
+        scope.launch {
+            if (_state.value !is ConnState.Connected) return@launch
+            for (file in _files.value) settings.markImported(file.handle, file.size)
+        }
+    }
+
+    fun humanError(e: Throwable): String = when (e) {
+        is com.achooluv.nikonlink.ptp.PtpException -> "相机返回错误：${e.message}"
+        is IOException -> e.message ?: "网络错误"
+        else -> e.message ?: e.javaClass.simpleName
+    }
+
+    fun isImported(file: CameraFile): Boolean = settings.isImported(file.handle, file.size)
+
+    companion object {
+        @Volatile
+        private var instance: NikonLinkRepository? = null
+
+        fun get(context: android.content.Context): NikonLinkRepository {
+            return instance ?: synchronized(this) {
+                instance ?: NikonLinkRepository(context.applicationContext as Application).also {
+                    instance = it
+                }
+            }
+        }
+    }
+}
