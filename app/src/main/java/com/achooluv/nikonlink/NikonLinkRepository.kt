@@ -14,6 +14,7 @@ import com.achooluv.nikonlink.ptp.PtpIpClient
 import com.achooluv.nikonlink.service.ConnectionService
 import com.achooluv.nikonlink.transfer.CameraDiscovery
 import com.achooluv.nikonlink.transfer.Downloader
+import com.achooluv.nikonlink.transfer.expandRawJpegPairs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -427,11 +428,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
         if (files.isEmpty()) return
         downloadJob?.cancel()
         _failedFiles.value = emptyList()
+        val expanded = if (settings.pairJpeg.value) expandRawJpegPairs(files) else files
         downloadJob = scope.launch {
             downloadMutex.withLock {
                 val chunk = settings.chunkSize.value
                 val partial = _profile.value?.supportsPartialObject ?: true
-                val result = downloader.download(client, files, chunk, force, partial) { p ->
+                val result = downloader.download(client, expanded, chunk, force, partial) { p ->
                     _progress.value = p
                 }
                 _failedFiles.value = result.failed

@@ -35,6 +35,8 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 | 存储 | 图片进 `Pictures/NikonLink`，视频进 `Movies/NikonLink`（MediaStore，无需存储权限） |
 | 自动拉取 | 监听相机 `ObjectAdded` 事件，拍摄即传；默认关闭，开启时不会把旧照片一起拉下来 |
 | 相机标记 | 读取相机上「发送到智能设备」的标记队列（尼康 `0x9407/0x9408`），在「相机标记」筛选里一键全部下载 |
+| RAW 配对 | 选中 `DSC_0001.NEF` 时自动带上同名的 `DSC_0001.JPG`，预览与分享都有图；可在设置里关闭 |
+| 未下载筛选 | 「未下载」只看还没取回的文件，配合「全选」可一键把新片搬空 |
 | 诊断 | 一键复制相机型号 / 固件 / 连接地址 / 最近 150 条协议日志，方便反馈问题 |
 
 ## 下载与安装
@@ -84,12 +86,18 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 ```bash
 # JDK 17 + Android SDK 35
 ./gradlew :app:assembleRelease      # 产物：app/build/outputs/apk/release/app-release.apk
-./gradlew :app:testDebugUnitTest    # 19 项测试，含进程内假相机的 PTP/IP 回环测试
+./gradlew :app:testDebugUnitTest    # 27 项测试，含进程内假相机的 PTP/IP 回环测试
 ```
 
 `keystore/nikonlink-release.jks` 为发布签名（口令写在 `app/build.gradle.kts`），用于让后续版本可以覆盖安装。
 
 ## 更新日志
+
+**v0.1.6**
+- RAW 配对下载：选中 NEF 时自动带上同名 JPEG（设置里可关）
+- 新增「未下载」筛选，配合「全选」可一键取回新片
+- 相册重名自动加序号（`DSC_0001 (1).JPG`），清空下载记录后重复取回也不会覆盖或重名
+- 新增配对与重名处理单测 8 项，测试总数 27
 
 **v0.1.5**
 - 连接成功后显示存储卡剩余 / 总容量（`GetStorageInfo` 汇总各卡）

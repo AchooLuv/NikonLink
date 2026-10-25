@@ -28,6 +28,10 @@ data class CameraFile(
     val extension: String
         get() = name.substringAfterLast('.', "").uppercase(Locale.US)
 
+    /** File name without extension, used to pair DSC_0001.NEF with DSC_0001.JPG. */
+    val baseName: String
+        get() = name.substringBeforeLast('.', name).uppercase(Locale.US)
+
     companion object {
         fun from(info: ObjectInfo, handle: Int): CameraFile = CameraFile(
             handle = handle,

@@ -253,7 +253,9 @@ class Downloader(
             File.separator + "NikonLink"
 
         val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+            put(MediaStore.MediaColumns.DISPLAY_NAME, uniqueDisplayName(file.name) { candidate ->
+                mediaNameExists(collection, relativePath, candidate)
+            })
             put(MediaStore.MediaColumns.MIME_TYPE, mimeFor(file))
             put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
@@ -276,8 +278,17 @@ class Downloader(
         return uri
     }
 
-    private fun mimeFor(file: CameraFile): String = when (file.extension) {
-        "JPG", "JPEG" -> "image/jpeg"
+    /** True when [name] already exists in the target MediaStore folder. */
+    private fun mediaNameExists(collection: Uri, relativePath: String, name: String): Boolean {
+        val projection = arrayOf(MediaStore.MediaColumns._ID)
+        val selection = "${MediaStore.MediaColumns.RELATIVE_PATH}=? AND ${MediaStore.MediaColumns.DISPLAY_NAME}=?"
+        val args = arrayOf("$relativePath/", name)
+        return runCatching {
+            context.contentResolver.query(collection, projection, selection, args, null)?.use { it.count > 0 } == true
+        }.getOrDefault(false)
+    }
+
+    private fun mimeFor(file: CameraFile): String = when (file.extension) {        "JPG", "JPEG" -> "image/jpeg"
         "NEF" -> "image/x-nikon-nef"
         "MOV" -> "video/quicktime"
         "MP4" -> "video/mp4"

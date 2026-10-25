@@ -70,6 +70,7 @@ import kotlinx.coroutines.withContext
 
 private enum class LibraryFilter(val label: String) {
     ALL("全部"),
+    NEW("未下载"),
     PHOTO("照片"),
     VIDEO("视频"),
     RAW("RAW"),
@@ -135,19 +136,20 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val thumbs = remember { ThumbStore() }
 
     val connected = state is ConnState.Connected
-    val visible = remember(files, filter, queue) {
+    val imported = remember(files, importsRev) {
+        files.filter { repo.isImported(it) }.map { it.handle }.toSet()
+    }
+    val visible = remember(files, filter, queue, imported) {
         val source = if (filter == LibraryFilter.MARKED) queue else files
         source.filter { file ->
             when (filter) {
                 LibraryFilter.ALL, LibraryFilter.MARKED -> true
+                LibraryFilter.NEW -> file.handle !in imported
                 LibraryFilter.PHOTO -> file.kind == FileKind.JPEG
                 LibraryFilter.VIDEO -> file.kind == FileKind.MOVIE
                 LibraryFilter.RAW -> file.kind == FileKind.RAW
             }
         }
-    }
-    val imported = remember(files, importsRev) {
-        files.filter { repo.isImported(it) }.map { it.handle }.toSet()
     }
 
     LaunchedEffect(filter, connected) {
@@ -168,6 +170,7 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                         busy && files.isEmpty() -> "正在读取存储卡…"
                         filter == LibraryFilter.MARKED ->
                             if (queueSupported) "相机上标记了 ${queue.size} 个 · 按相机 i 键可标记" else "这台相机不支持标记队列"
+                        filter == LibraryFilter.NEW -> "${visible.size} 个未下载 · 可全选后一键下载"
                         else -> "${files.size} 个文件 · 预览使用相机 JPEG 缩略图"
                     },
                     color = NikonLinkTheme.colors.dim,

@@ -47,6 +47,7 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     val keepAlive by settings.keepAlive.collectAsStateWithLifecycle()
     val keepAliveSeconds by settings.keepAliveSeconds.collectAsStateWithLifecycle()
     val rawThumbs by settings.showRawThumbnails.collectAsStateWithLifecycle()
+    val pairJpeg by settings.pairJpeg.collectAsStateWithLifecycle()
     val chunk by settings.chunkSize.collectAsStateWithLifecycle()
     val eventsSupported by repo.eventsSupported.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -161,6 +162,13 @@ fun SettingsScreen(repo: NikonLinkRepository) {
                 subtitle = "RAW 只下载完整文件不解码；预览统一用相机内嵌 JPEG 缩略图。",
                 checked = rawThumbs,
                 onCheckedChange = { settings.setShowRawThumbnails(it) },
+            )
+            HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 14.dp))
+            SettingSwitch(
+                title = "RAW 顺带下载配对 JPEG",
+                subtitle = "选中 DSC_0001.NEF 时，如果卡里有同名的 DSC_0001.JPG 就一起下载，方便直接预览与分享。",
+                checked = pairJpeg,
+                onCheckedChange = { settings.setPairJpeg(it) },
             )
         }
 

@@ -15,6 +15,7 @@ class SettingsStore(context: Context) {
     val autoPull = MutableStateFlow(prefs.getBoolean(KEY_AUTO_PULL, false))
     val keepAlive = MutableStateFlow(prefs.getBoolean(KEY_KEEP_ALIVE, true))
     val showRawThumbnails = MutableStateFlow(prefs.getBoolean(KEY_RAW_THUMBS, true))
+    val pairJpeg = MutableStateFlow(prefs.getBoolean(KEY_PAIR_JPEG, true))
     val chunkSize = MutableStateFlow(prefs.getInt(KEY_CHUNK, DEFAULT_CHUNK))
     val keepAliveSeconds = MutableStateFlow(prefs.getInt(KEY_KEEPALIVE_SECONDS, 15))
 
@@ -60,6 +61,11 @@ class SettingsStore(context: Context) {
         prefs.edit().putBoolean(KEY_RAW_THUMBS, enabled).apply()
     }
 
+    fun setPairJpeg(enabled: Boolean) {
+        pairJpeg.value = enabled
+        prefs.edit().putBoolean(KEY_PAIR_JPEG, enabled).apply()
+    }
+
     fun setChunkSize(bytes: Int) {
         chunkSize.value = bytes
         prefs.edit().putInt(KEY_CHUNK, bytes).apply()
@@ -86,6 +92,7 @@ class SettingsStore(context: Context) {
         private const val KEY_AUTO_PULL = "auto_pull"
         private const val KEY_KEEP_ALIVE = "keep_alive"
         private const val KEY_RAW_THUMBS = "raw_thumbs"
+        private const val KEY_PAIR_JPEG = "pair_jpeg"
         private const val KEY_CHUNK = "chunk_size"
         private const val KEY_KEEPALIVE_SECONDS = "keepalive_seconds"
         private const val KEY_SSID = "last_ssid"
