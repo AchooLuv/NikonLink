@@ -74,6 +74,8 @@ fun ConnectScreen(
     var manualDialog by remember { mutableStateOf(false) }
     val connected = state is ConnState.Connected
     val busy = state is ConnState.Connecting || state is ConnState.Reconnecting
+    val context = LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
     Column(
         Modifier
@@ -158,6 +160,35 @@ fun ConnectScreen(
                     border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
                 ) {
                     Text("手动 SSID", color = Paper, fontSize = 13.sp)
+                }
+            }
+
+            if (state is ConnState.Error) {
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = { manualDialog = true },
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
+                    ) {
+                        Text("换 IP 重试", color = Paper, fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            clipboard.setText(
+                                androidx.compose.ui.text.AnnotatedString(
+                                    com.achooluv.nikonlink.Diagnostics.dump(context),
+                                ),
+                            )
+                            android.widget.Toast.makeText(context, "诊断信息已复制", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f).height(44.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
+                    ) {
+                        Text("复制诊断信息", color = Paper, fontSize = 12.sp)
+                    }
                 }
             }
 
@@ -251,10 +282,11 @@ fun ConnectScreen(
         ManualConnectDialog(
             initialSsid = settings.lastSsid,
             initialPass = settings.lastPassphrase,
+            initialHost = settings.lastHost.ifBlank { "192.168.1.1" },
             onDismiss = { manualDialog = false },
-            onConnect = { ssid, pass ->
+            onConnect = { ssid, pass, host ->
                 manualDialog = false
-                repo.connect(ssid = ssid, passphrase = pass)
+                repo.connect(ssid = ssid, passphrase = pass, host = host)
             },
         )
     }
@@ -414,11 +446,13 @@ private fun StatusEmblem(state: ConnState) {
 private fun ManualConnectDialog(
     initialSsid: String,
     initialPass: String,
+    initialHost: String,
     onDismiss: () -> Unit,
-    onConnect: (String, String) -> Unit,
+    onConnect: (String, String, String?) -> Unit,
 ) {
     var ssid by remember { mutableStateOf(initialSsid) }
     var pass by remember { mutableStateOf(initialPass) }
+    var host by remember { mutableStateOf(initialHost) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -450,10 +484,26 @@ private fun ManualConnectDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = { host = it },
+                    label = { Text("相机 IP（可选）", fontSize = 12.sp) },
+                    placeholder = { Text("192.168.1.1", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "相机不在 192.168.1.x 网段时，在这里填它的实际地址。",
+                    color = PaperDim.copy(alpha = 0.8f),
+                    fontSize = 10.5.sp,
+                    lineHeight = 15.sp,
+                )
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConnect(ssid.trim(), pass) }) {
+            TextButton(onClick = { onConnect(ssid.trim(), pass, host.trim().takeIf { it.isNotBlank() }) }) {
                 Text("连接", color = NikonYellow)
             }
         },

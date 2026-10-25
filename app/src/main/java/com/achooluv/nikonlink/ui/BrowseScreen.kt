@@ -6,6 +6,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,6 +72,7 @@ private enum class LibraryFilter(val label: String) {
     PHOTO("照片"),
     VIDEO("视频"),
     RAW("RAW"),
+    MARKED("相机标记"),
 }
 
 /**
@@ -120,16 +123,20 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val hasMore by repo.hasMore.collectAsStateWithLifecycle()
     val progress by repo.progress.collectAsStateWithLifecycle()
     val importsRev by repo.importsVersion.collectAsStateWithLifecycle()
+    val queue by repo.transferQueue.collectAsStateWithLifecycle()
+    val queueBusy by repo.queueBusy.collectAsStateWithLifecycle()
+    val queueSupported by repo.queueSupported.collectAsStateWithLifecycle()
 
     var filter by remember { mutableStateOf(LibraryFilter.ALL) }
     var selection by remember { mutableStateOf(setOf<Int>()) }
     val thumbs = remember { ThumbStore() }
 
     val connected = state is ConnState.Connected
-    val visible = remember(files, filter) {
-        files.filter { file ->
+    val visible = remember(files, filter, queue) {
+        val source = if (filter == LibraryFilter.MARKED) queue else files
+        source.filter { file ->
             when (filter) {
-                LibraryFilter.ALL -> true
+                LibraryFilter.ALL, LibraryFilter.MARKED -> true
                 LibraryFilter.PHOTO -> file.kind == FileKind.JPEG
                 LibraryFilter.VIDEO -> file.kind == FileKind.MOVIE
                 LibraryFilter.RAW -> file.kind == FileKind.RAW
@@ -138,6 +145,10 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     }
     val imported = remember(files, importsRev) {
         files.filter { repo.isImported(it) }.map { it.handle }.toSet()
+    }
+
+    LaunchedEffect(filter, connected) {
+        if (connected && filter == LibraryFilter.MARKED) repo.refreshTransferQueue()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -152,13 +163,20 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                     when {
                         !connected -> "相机未连接"
                         busy && files.isEmpty() -> "正在读取存储卡…"
+                        filter == LibraryFilter.MARKED ->
+                            if (queueSupported) "相机上标记了 ${queue.size} 个 · 按相机 i 键可标记" else "这台相机不支持标记队列"
                         else -> "${files.size} 个文件 · 预览使用相机 JPEG 缩略图"
                     },
                     color = NikonLinkTheme.colors.dim,
                     fontSize = 12.sp,
                 )
             }
-            IconButton(onClick = { repo.refreshLibrary() }, enabled = connected && !busy) {
+            IconButton(
+                onClick = {
+                    if (filter == LibraryFilter.MARKED) repo.refreshTransferQueue() else repo.refreshLibrary()
+                },
+                enabled = connected && !busy && !queueBusy,
+            ) {
                 Icon(
                     Icons.Rounded.Refresh,
                     contentDescription = "刷新",
@@ -169,7 +187,10 @@ fun BrowseScreen(repo: NikonLinkRepository) {
 
         Spacer(Modifier.height(12.dp))
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             LibraryFilter.entries.forEach { f ->
@@ -211,7 +232,18 @@ fun BrowseScreen(repo: NikonLinkRepository) {
             if (!connected) {
                 EmptyState("先连接相机", "连接成功后，这里会显示存储卡里的照片、视频与 RAW。")
             } else if (visible.isEmpty() && !busy) {
-                EmptyState("没有可下载的文件", "换个筛选条件，或在相机上拍一张再刷新。")
+                if (filter == LibraryFilter.MARKED) {
+                    EmptyState(
+                        if (queueSupported) "相机上没有标记" else "这台相机不支持标记队列",
+                        if (queueSupported) {
+                            "在相机上按 i 键（或回放菜单）选择「发送到智能设备」，再回来点右上角刷新。"
+                        } else {
+                            "改用「全部」手动挑选，或在设置里打开自动拉取。"
+                        },
+                    )
+                } else {
+                    EmptyState("没有可下载的文件", "换个筛选条件，或在相机上拍一张再刷新。")
+                }
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),

@@ -143,6 +143,8 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 _state.value = ConnState.Connecting("正在读取相机信息…")
                 val info = client.deviceInfo()
                 Diagnostics.log("相机 ${info.manufacturer} ${info.model} fw=${info.deviceVersion} 事件通道=${client.eventsAvailable}")
+                _queueSupported.value = true
+                _queue.value = emptyList()
                 val profile = CameraProfile.forModel(info.model)
                 val partial = profile.supportsPartialObject && info.supports(Ptp.OP_GET_PARTIAL_OBJECT)
 
@@ -313,8 +315,58 @@ class NikonLinkRepository private constructor(private val app: Application) {
         _hasMore.value = loadedPages * pageSize < allHandles.size
     }
 
-    /** Loads a JPEG preview for [handle]; returns null when the body has none. */
-    suspend fun thumbnail(handle: Int): ByteArray? {
+    // ------------------------------------------------------ camera-marked queue
+
+    private val _queue = MutableStateFlow<List<CameraFile>>(emptyList())
+    val transferQueue: StateFlow<List<CameraFile>> = _queue
+
+    private val _queueBusy = MutableStateFlow(false)
+    val queueBusy: StateFlow<Boolean> = _queueBusy
+
+    private val _queueSupported = MutableStateFlow(true)
+    val queueSupported: StateFlow<Boolean> = _queueSupported
+
+    /**
+     * Reads the photos marked on the camera body for "send to smart device"
+     * (Nikon vendor ops 0x9407 lock / 0x9408 read). Bodies without the vendor
+     * extension are simply reported as unsupported.
+     */
+    fun refreshTransferQueue() {
+        scope.launch {
+            if (_state.value !is ConnState.Connected) return@launch
+            _queueBusy.value = true
+            try {
+                client.setTransferListLock(true)
+                try {
+                    val handles = client.transferList()
+                    val files = ArrayList<CameraFile>(handles.size)
+                    for (handle in handles) {
+                        val info = runCatching { client.objectInfo(handle) }.getOrNull() ?: continue
+                        if (info.isFolder) continue
+                        files += CameraFile.from(info, handle)
+                    }
+                    _queue.value = files
+                    Diagnostics.log("相机标记 ${files.size} 个")
+                } finally {
+                    runCatching { client.setTransferListLock(false) }
+                }
+            } catch (e: com.achooluv.nikonlink.ptp.PtpException) {
+                if (e.code == Ptp.RESP_OPERATION_NOT_SUPPORTED) {
+                    _queueSupported.value = false
+                    _queue.value = emptyList()
+                    Diagnostics.log("相机不支持发送队列（0x9407/0x9408）")
+                } else {
+                    Diagnostics.log("读取发送队列失败：${e.message}")
+                }
+            } catch (e: Exception) {
+                Diagnostics.log("读取发送队列失败：${e.message}")
+            } finally {
+                _queueBusy.value = false
+            }
+        }
+    }
+
+    /** Loads a JPEG preview for [handle]; returns null when the body has none. */    suspend fun thumbnail(handle: Int): ByteArray? {
         thumbnailCache.get(handle)?.let { return it }
         thumbMutex.withLock {
             thumbnailCache.get(handle)?.let { return it }
@@ -438,9 +490,24 @@ class NikonLinkRepository private constructor(private val app: Application) {
 
     fun humanError(e: Throwable): String = when (e) {
         is com.achooluv.nikonlink.ptp.PtpException -> "相机返回错误：${e.message}"
-        is IOException -> e.message ?: "网络错误"
+        is com.achooluv.nikonlink.ptp.PtpLinkException -> "PTP/IP 握手失败：${e.message}"
+        is java.net.SocketTimeoutException -> timeoutHint()
+        is java.net.ConnectException -> "连不上相机端口：网络不可达，确认手机 Wi-Fi 已连到 NIKON_ 网络"
+        is java.net.UnknownHostException -> "地址无法解析，请检查手动填写的相机 IP"
+        is IOException -> {
+            val raw = e.message.orEmpty()
+            if (raw.contains("failed to connect", true) || raw.contains("timeout", true)) {
+                timeoutHint()
+            } else {
+                raw.ifBlank { "网络错误" }
+            }
+        }
         else -> e.message ?: e.javaClass.simpleName
     }
+
+    private fun timeoutHint(): String =
+        "连接超时：没在 ${currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST }}:${Ptp.PORT} 找到相机。" +
+            "确认手机 Wi-Fi 已连上 NIKON_ 网络；若相机不在 192.168.1.x 网段，用「换 IP 重试」填写实际地址。"
 
     fun isImported(file: CameraFile): Boolean = settings.isImported(file.handle, file.size)
 
