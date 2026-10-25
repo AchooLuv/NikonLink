@@ -64,6 +64,8 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 
 **下载一半失败** — 直接重试同一个文件，会从 `.part` 的断点继续。
 
+**连不上、想反馈** — 设置页 →「复制诊断信息」，把复制到的内容贴到 [Issues](https://github.com/AchooLuv/NikonLink/issues)，里面已包含相机型号、固件与最近的协议日志。
+
 ## 技术实现
 
 - **PTP/IP（ISO 15740 over TCP，端口 15740）**：双 TCP 连接（命令/数据 + 事件），`Init_Command_Request/Ack`、`Init_Event_Request/Ack` 握手，`OpenSession` 后执行 PTP 事务
@@ -83,6 +85,11 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 `keystore/nikonlink-release.jks` 为发布签名（口令写在 `app/build.gradle.kts`），用于让后续版本可以覆盖安装。
 
 ## 更新日志
+
+**v0.1.2**
+- 分块被相机拒绝时自动降级（4 MiB → 2 MiB → 1 MiB → 512 KiB），并回滚该块已写入的半截数据，不会污染 `.part`
+- 事件通道容错：相机不接受 PTP/IP 事件连接时仍可正常浏览与下载，设置页会标注「自动拉取不可用」
+- 新增「复制诊断信息」：一键导出相机型号 / 固件 / 连接步骤 / 最近 150 条协议日志，便于定位连接问题
 
 **v0.1.1**
 - 缩略图改为 32 MB 有界缓存，几千张的卡滚动浏览也不会累积内存

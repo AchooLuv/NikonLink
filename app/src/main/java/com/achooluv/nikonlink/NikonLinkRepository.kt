@@ -75,6 +75,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val _importsVersion = MutableStateFlow(0)
     val importsVersion: StateFlow<Int> = _importsVersion
 
+    /** False when the body refuses the PTP/IP event channel (auto-pull is then unavailable). */
+    private val _eventsSupported = MutableStateFlow(true)
+    val eventsSupported: StateFlow<Boolean> = _eventsSupported
+
     private val thumbnailCache = object : LruCache<Int, ByteArray>(8 * 1024 * 1024) {
         override fun sizeOf(key: Int, value: ByteArray): Int = value.size
     }
@@ -132,10 +136,13 @@ class NikonLinkRepository private constructor(private val app: Application) {
                     ?: CameraWifi.DEFAULT_CAMERA_HOST
 
                 _state.value = ConnState.Connecting("正在建立 PTP/IP 会话…")
+                Diagnostics.log("连接 $resolved:${Ptp.PORT}")
                 client.connect(resolved)
+                _eventsSupported.value = client.eventsAvailable
 
                 _state.value = ConnState.Connecting("正在读取相机信息…")
                 val info = client.deviceInfo()
+                Diagnostics.log("相机 ${info.manufacturer} ${info.model} fw=${info.deviceVersion} 事件通道=${client.eventsAvailable}")
                 val profile = CameraProfile.forModel(info.model)
                 val partial = profile.supportsPartialObject && info.supports(Ptp.OP_GET_PARTIAL_OBJECT)
 
@@ -172,6 +179,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 throw cancel
             } catch (e: Exception) {
                 _state.value = ConnState.Error(humanError(e))
+                Diagnostics.log("连接失败：${humanError(e)}")
                 ConnectionService.stop(app)
                 client.close()
             }

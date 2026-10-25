@@ -45,6 +45,11 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
 
     val isConnected: Boolean get() = !closed && cmdSocket != null
 
+    /** False when the body refused the event channel; downloads still work, events do not. */
+    @Volatile
+    var eventsAvailable: Boolean = false
+        private set
+
     /**
      * Dials [host]:[port], performs the PTP/IP handshake on both connections and
      * opens a PTP session. Blocking; call from a background dispatcher.
@@ -61,23 +66,29 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
 
         val event = newSocket()
         event.connect(InetSocketAddress(host, port), connectTimeoutMs)
-        runCatching { initEvent(event, ack.connectionNumber) }.onFailure { e ->
-            runCatching { command.close() }
-            runCatching { event.close() }
-            throw PtpLinkException("Event channel rejected: ${e.message}", e)
-        }
+        // A few bodies answer the command channel but never bind the event channel.
+        // Downloads still work in that case, so treat a failed event handshake as a
+        // degraded mode instead of a fatal error.
+        runCatching { event.soTimeout = 8_000 }
+        val eventReady = runCatching { initEvent(event, ack.connectionNumber) }
+            .onFailure { runCatching { event.close() } }
+            .isSuccess
+        if (eventReady) runCatching { event.soTimeout = 0 }
 
         cmdSocket = command
         cmdOut = command.getOutputStream()
         cmdInput = LeInput(command.getInputStream())
-        evtSocket = event
+        evtSocket = if (eventReady) event else null
+        eventsAvailable = eventReady
         closed = false
         txnId = 0
         sessionId = 0
 
-        eventThread = Thread({ readEventLoop(event) }, "nikonlink-events").apply {
-            isDaemon = true
-            start()
+        if (eventReady) {
+            eventThread = Thread({ readEventLoop(event) }, "nikonlink-events").apply {
+                isDaemon = true
+                start()
+            }
         }
 
         try {

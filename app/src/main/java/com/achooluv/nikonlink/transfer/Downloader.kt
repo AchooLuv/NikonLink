@@ -5,9 +5,11 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
+import com.achooluv.nikonlink.Diagnostics
 import com.achooluv.nikonlink.camera.CameraFile
 import com.achooluv.nikonlink.camera.FileKind
 import com.achooluv.nikonlink.data.SettingsStore
+import com.achooluv.nikonlink.ptp.Ptp
 import com.achooluv.nikonlink.ptp.PtpException
 import com.achooluv.nikonlink.ptp.PtpIpClient
 import kotlinx.coroutines.CancellationException
@@ -121,6 +123,7 @@ class Downloader(
             emit()
 
             try {
+                Diagnostics.log("开始下载 ${file.name} (${file.size} B) 从 ${fileBytes} 起")
                 if (!supportsPartial && fileBytes > 0L) {
                     part.delete()
                     fileBytes = 0L
@@ -144,17 +147,30 @@ class Downloader(
                     }
                     if (supportsPartial) {
                         raf.seek(fileBytes)
+                        var chunk = chunkSize
                         while (fileBytes < file.size) {
                             coroutineContext.ensureActive()
-                            val want = minOf(chunkSize.toLong(), file.size - fileBytes).toInt()
-                            val written = client.downloadRange(file.handle, fileBytes, want) { input, count ->
-                                input.copyTo(rafOut, count)
+                            val want = minOf(chunk.toLong(), file.size - fileBytes).toInt()
+                            try {
+                                val written = client.downloadRange(file.handle, fileBytes, want) { input, count ->
+                                    input.copyTo(rafOut, count)
+                                }
+                                if (written <= 0L) throw IOException("相机在偏移 $fileBytes 处返回了空数据块")
+                                fileBytes += written
+                                totalBytes += written
+                                tick()
+                                emit()
+                            } catch (e: PtpException) {
+                                // A rejected chunk can leave partial bytes behind: roll the
+                                // file back to the last committed offset before retrying.
+                                raf.setLength(fileBytes)
+                                raf.seek(fileBytes)
+                                val smaller = nextChunkSize(chunk, e.code)
+                                if (smaller == chunk) throw e
+                                Diagnostics.log("分块降级 ${chunk / 1024}K → ${smaller / 1024}K：${e.message}")
+                                chunk = smaller
+                                message = "相机拒绝 ${chunk / 1024} KiB 分块，已自动降级重试"
                             }
-                            if (written <= 0L) throw IOException("相机在偏移 $fileBytes 处返回了空数据块")
-                            fileBytes += written
-                            totalBytes += written
-                            tick()
-                            emit()
                         }
                     } else {
                         // Firmware without GetPartialObject: one streaming pass, no resume.
@@ -178,12 +194,14 @@ class Downloader(
                 part.delete()
                 settings.markImported(file.handle, file.size)
                 doneCount++
+                Diagnostics.log("完成 ${file.name} → 相册")
                 emit()
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (e: Exception) {
                 failedCount++
                 message = describe(e)
+                Diagnostics.log("失败 ${file.name}：$message")
                 emit()
             }
         }
@@ -256,4 +274,19 @@ class Downloader(
     fun savedFolderHint(): String = "Pictures/NikonLink · Movies/NikonLink"
 
     fun describeSize(bytes: Long): String = String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
+}
+
+/** Smallest chunk NikonLink falls back to before giving up on a body. */
+const val MIN_CHUNK_SIZE = 512 * 1024
+
+/**
+ * Chunk size to retry with after a PTP failure, or [current] when the error does
+ * not look like "this body rejects chunks that large".
+ */
+internal fun nextChunkSize(current: Int, code: Int): Int {
+    val shrinkable = code == Ptp.RESP_INVALID_PARAMETER ||
+        code == Ptp.RESP_INCOMPLETE_TRANSFER ||
+        code == Ptp.RESP_GENERAL_ERROR
+    if (!shrinkable || current <= MIN_CHUNK_SIZE) return current
+    return maxOf(MIN_CHUNK_SIZE, current / 2)
 }

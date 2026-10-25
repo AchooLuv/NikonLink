@@ -47,7 +47,9 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     val keepAlive by settings.keepAlive.collectAsStateWithLifecycle()
     val rawThumbs by settings.showRawThumbnails.collectAsStateWithLifecycle()
     val chunk by settings.chunkSize.collectAsStateWithLifecycle()
+    val eventsSupported by repo.eventsSupported.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     var confirmClear by remember { mutableStateOf(false) }
 
     Column(
@@ -67,7 +69,11 @@ fun SettingsScreen(repo: NikonLinkRepository) {
         NikonCard {
             SettingSwitch(
                 title = "拍摄后自动拉取",
-                subtitle = "相机拍到新照片时自动下载到手机。默认关闭；开启时只拉之后拍的照片，不会把卡里旧照片一起下载。",
+                subtitle = if (eventsSupported) {
+                    "相机拍到新照片时自动下载到手机。默认关闭；开启时只拉之后拍的照片，不会把卡里旧照片一起下载。"
+                } else {
+                    "这台相机没有开放 PTP/IP 事件通道，自动拉取不可用；仍可在「浏览」里手动下载。"
+                },
                 checked = autoPull,
                 onCheckedChange = { repo.setAutoPull(it) },
             )
@@ -143,6 +149,46 @@ fun SettingsScreen(repo: NikonLinkRepository) {
                 color = PaperDim,
                 fontSize = 13.sp,
                 modifier = Modifier.clickable { confirmClear = true }.padding(vertical = 4.dp),
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SectionTitle("诊断")
+        Spacer(Modifier.height(10.dp))
+        NikonCard {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text("复制诊断信息", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "包含相机型号、固件、连接步骤与最近 150 条协议日志。出问题时贴到 GitHub Issue 即可定位。",
+                        color = PaperDim,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "复制到剪贴板",
+                color = NikonYellow,
+                fontSize = 13.sp,
+                modifier = Modifier.clickable {
+                    clipboard.setText(
+                        androidx.compose.ui.text.AnnotatedString(com.achooluv.nikonlink.Diagnostics.dump(context)),
+                    )
+                    android.widget.Toast.makeText(context, "诊断信息已复制", android.widget.Toast.LENGTH_SHORT).show()
+                }.padding(vertical = 4.dp),
+            )
+            HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 10.dp))
+            Text(
+                "清空日志",
+                color = PaperDim,
+                fontSize = 13.sp,
+                modifier = Modifier.clickable {
+                    com.achooluv.nikonlink.Diagnostics.clear()
+                    android.widget.Toast.makeText(context, "日志已清空", android.widget.Toast.LENGTH_SHORT).show()
+                }.padding(vertical = 4.dp),
             )
         }
 
