@@ -233,6 +233,16 @@ fun ConnectScreen(
                         "断点续传",
                         if (profile?.supportsPartialObject == true) "支持" else "相机不支持",
                     )
+                    val free = id.storageFree
+                    if (free != null) {
+                        InfoRow(
+                            "存储卡剩余",
+                            buildString {
+                                append(formatBytes(free))
+                                id.storageTotal?.let { append(" / ").append(formatBytes(it)) }
+                            },
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(12.dp))

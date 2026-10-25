@@ -174,6 +174,11 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                     fontSize = 12.sp,
                 )
             }
+            if (connected && visible.isNotEmpty()) {
+                TextButton(onClick = { selection = visible.map { it.handle }.toSet() }) {
+                    Text("全选", color = PaperDim, fontSize = 12.sp)
+                }
+            }
             IconButton(
                 onClick = {
                     if (filter == LibraryFilter.MARKED) repo.refreshTransferQueue() else repo.refreshLibrary()

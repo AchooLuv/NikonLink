@@ -84,11 +84,18 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 ```bash
 # JDK 17 + Android SDK 35
 ./gradlew :app:assembleRelease      # 产物：app/build/outputs/apk/release/app-release.apk
+./gradlew :app:testDebugUnitTest    # 19 项测试，含进程内假相机的 PTP/IP 回环测试
 ```
 
 `keystore/nikonlink-release.jks` 为发布签名（口令写在 `app/build.gradle.kts`），用于让后续版本可以覆盖安装。
 
 ## 更新日志
+
+**v0.1.5**
+- 连接成功后显示存储卡剩余 / 总容量（`GetStorageInfo` 汇总各卡）
+- 传输期间自动保持屏幕常亮，批次结束立即释放
+- 浏览页新增「全选」，一键选中当前筛选下的全部文件
+- 新增 PTP/IP **回环测试**：用真实 socket 起一个假相机，覆盖握手、双通道、分块下载、断点续传、事件通道降级与 InitFail，共 4 项；测试总数 19
 
 **v0.1.4**
 - 传输条新增剩余时间（ETA）与实时速度；结束后出现结果条：打开相册 / 重试失败项 / 关闭

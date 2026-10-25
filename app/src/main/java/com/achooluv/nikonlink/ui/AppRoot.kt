@@ -1,5 +1,7 @@
 package com.achooluv.nikonlink.ui
 
+import android.app.Activity
+import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
@@ -17,16 +19,18 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.achooluv.nikonlink.NikonLinkRepository
 
 private data class Tab(val label: String, val icon: @Composable () -> Unit)
@@ -35,6 +39,19 @@ private data class Tab(val label: String, val icon: @Composable () -> Unit)
 fun AppRoot(repo: NikonLinkRepository) {
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
     var showTutorial by rememberSaveable { mutableStateOf(false) }
+
+    // Keep the screen awake while bytes are moving; release it as soon as the
+    // batch ends so the phone can sleep again.
+    val progress by repo.progress.collectAsStateWithLifecycle()
+    val activity = LocalContext.current as? Activity
+    LaunchedEffect(progress.active) {
+        val window = activity?.window ?: return@LaunchedEffect
+        if (progress.active) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
 
     val tabs = listOf(
         Tab("连接") { Icon(Icons.Rounded.Link, contentDescription = null) },

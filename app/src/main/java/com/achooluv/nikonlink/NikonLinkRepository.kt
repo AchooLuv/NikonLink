@@ -164,15 +164,17 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 _files.value = emptyList()
                 thumbnailCache.evictAll()
 
+                val storage = readStorage()
                 _identity.value = CameraIdentity(
                     model = info.model.ifBlank { "Nikon 相机" },
                     manufacturer = info.manufacturer,
                     serial = info.serialNumber,
                     firmware = info.deviceVersion,
                     battery = runCatching { client.batteryLevel() }.getOrNull(),
-                    storageFree = null,
-                    storageTotal = null,
+                    storageFree = storage.first,
+                    storageTotal = storage.second,
                 )
+                Diagnostics.log("存储可用 ${storage.first} / ${storage.second}")
 
                 if (targetSsid.isNotBlank()) {
                     settings.lastSsid = targetSsid
@@ -196,7 +198,25 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
-    fun disconnect() {        userDisconnected = true
+    /** Aggregates free/total bytes across every card the body exposes. */
+    private fun readStorage(): Pair<Long?, Long?> {
+        return runCatching {
+            var free = 0L
+            var total = 0L
+            var seen = false
+            for (id in client.storageIds()) {
+                val info = runCatching { client.storageInfo(id) }.getOrNull() ?: continue
+                if (info.maxCapacity <= 0) continue
+                seen = true
+                free += info.freeSpace
+                total += info.maxCapacity
+            }
+            if (!seen) null to null else free to total
+        }.getOrDefault(null to null)
+    }
+
+    fun disconnect() {
+        userDisconnected = true
         connectJob?.cancel()
         keepAliveJob?.cancel()
         ConnectionService.stop(app)
