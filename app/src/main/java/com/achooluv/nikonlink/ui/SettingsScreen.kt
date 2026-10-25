@@ -67,7 +67,7 @@ fun SettingsScreen(repo: NikonLinkRepository) {
             .verticalScroll(rememberScrollState())
             .padding(start = 20.dp, end = 20.dp, bottom = 120.dp),
     ) {
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(6.dp))
         Text("设置", color = Paper, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(3.dp))
         Text("只保留必要选项", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)

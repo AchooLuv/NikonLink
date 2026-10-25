@@ -155,7 +155,7 @@ fun BrowseScreen(repo: NikonLinkRepository) {
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 24.dp),
+            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {

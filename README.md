@@ -1,5 +1,9 @@
 # NikonLink
 
+<p align="center">
+  <img src="docs/brand.png" width="220" alt="NikonLink">
+</p>
+
 **尼康 Z 系列相机 → Android 无线图传。** 手机直连相机 Wi-Fi，走原生 **PTP/IP** 协议取图，不经过电脑、不需要尼康官方 App，也不用数据线。
 
 [![Release](https://img.shields.io/github/v/release/AchooLuv/NikonLink?label=APK&color=FFCD00)](https://github.com/AchooLuv/NikonLink/releases/latest)
@@ -92,6 +96,12 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 `keystore/nikonlink-release.jks` 为发布签名（口令写在 `app/build.gradle.kts`），用于让后续版本可以覆盖安装。
 
 ## 更新日志
+
+**v0.1.12**
+- 图标换成带 NikonLink 字标的插画版：相机 → Wi-Fi → 照片卡片 → 手机，整体缩放进自适应图标安全区，圆形遮罩下相机、手机与字标都完整
+- README 顶部加上同一张品牌图
+- 三个页面的标题更贴近状态栏（顶部留白 28/24dp → 6dp），不再是「标题离状态栏一大截空白」
+- 启动闪屏背景改为深色（`windowSplashScreenBackground`），去掉进入 App 时的白闪
 
 **v0.1.11**
 - 图标第二版：黑色相机 + 黄色镜头 + 镜头内的向下传输箭头，去掉上一版像天线的信号弧，构图更居中；48dp 下仍能看出「从相机取图」的意思
