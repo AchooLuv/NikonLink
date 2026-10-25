@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launcher label on Chinese devices only; English keeps "NikonLink". -->
+    <string name="app_name">尼康图传</string>
+</resources>
