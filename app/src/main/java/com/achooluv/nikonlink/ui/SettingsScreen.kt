@@ -67,9 +67,9 @@ fun SettingsScreen(repo: NikonLinkRepository) {
         NikonCard {
             SettingSwitch(
                 title = "拍摄后自动拉取",
-                subtitle = "相机拍到新照片时自动下载到手机。默认关闭，避免持续占用 Wi-Fi。",
+                subtitle = "相机拍到新照片时自动下载到手机。默认关闭；开启时只拉之后拍的照片，不会把卡里旧照片一起下载。",
                 checked = autoPull,
-                onCheckedChange = { settings.setAutoPull(it) },
+                onCheckedChange = { repo.setAutoPull(it) },
             )
             HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 14.dp))
             Caption("分块大小")

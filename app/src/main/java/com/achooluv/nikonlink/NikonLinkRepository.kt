@@ -71,6 +71,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val _progress = MutableStateFlow(Downloader.Progress())
     val progress: StateFlow<Downloader.Progress> = _progress
 
+    /** Bumped whenever a file finishes so the grid can refresh its "downloaded" badges. */
+    private val _importsVersion = MutableStateFlow(0)
+    val importsVersion: StateFlow<Int> = _importsVersion
+
     private val thumbnailCache = object : LruCache<Int, ByteArray>(8 * 1024 * 1024) {
         override fun sizeOf(key: Int, value: ByteArray): Int = value.size
     }
@@ -83,6 +87,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private var loadedPages = 0
     private var connectJob: Job? = null
     private var keepAliveJob: Job? = null
+    private var downloadJob: Job? = null
     private var userDisconnected = false
     private var currentHost: String = ""
 
@@ -120,9 +125,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 if (network != null) client.socketFactory = network.socketFactory
 
                 _state.value = ConnState.Connecting("正在查找相机…")
+                val candidates = candidateHosts(network)
                 val resolved = host?.takeIf { it.isNotBlank() }
-                    ?: settings.lastHost.takeIf { it.isNotBlank() && CameraDiscovery.probe(it, Ptp.PORT, network, 1200) }
-                    ?: CameraDiscovery.find(Ptp.PORT, network)
+                    ?: candidates.firstOrNull { CameraDiscovery.probe(it, Ptp.PORT, network, 1200) }
+                    ?: CameraDiscovery.find(Ptp.PORT, network, candidates)
                     ?: CameraWifi.DEFAULT_CAMERA_HOST
 
                 _state.value = ConnState.Connecting("正在建立 PTP/IP 会话…")
@@ -256,6 +262,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 allHandles = handles.distinct().sortedDescending()
                 loadedPages = 0
                 _files.value = emptyList()
+                reconcileBaseline()
                 loadPage()
             } catch (e: Exception) {
                 // Keep the old list; surface nothing louder than a retry affordance.
@@ -325,19 +332,27 @@ class NikonLinkRepository private constructor(private val app: Application) {
 
     fun download(files: List<CameraFile>, force: Boolean = false) {
         if (files.isEmpty()) return
-        scope.launch {
+        downloadJob?.cancel()
+        downloadJob = scope.launch {
             downloadMutex.withLock {
                 val chunk = settings.chunkSize.value
                 val partial = _profile.value?.supportsPartialObject ?: true
                 downloader.download(client, files, chunk, force, partial) { p ->
                     _progress.value = p
                 }
+                _importsVersion.value++
             }
         }
     }
 
     fun cancelDownloads() {
-        _progress.value = _progress.value.copy(message = "任务已在当前分块后停止")
+        val job = downloadJob
+        if (job != null && job.isActive) {
+            job.cancel()
+            _progress.value = _progress.value.copy(active = false, message = "已取消，已下载部分保留为断点")
+        } else {
+            _progress.value = _progress.value.copy(message = "没有正在进行的传输")
+        }
     }
 
     // ----------------------------------------------------------------- events
@@ -347,6 +362,9 @@ class NikonLinkRepository private constructor(private val app: Application) {
         val handle = event.params.firstOrNull() ?: return
         if (!settings.autoPull.value) return
         if (_state.value !is ConnState.Connected) return
+        // Only objects shot after auto-pull was armed; never the existing card.
+        val baseline = settings.autoPullBaseline
+        if (baseline >= 0 && handle <= baseline) return
         scope.launch {
             // Give the camera a moment to finish writing the file.
             delay(600)
@@ -371,14 +389,43 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     /**
-     * Marks everything currently on the card as "already seen" when auto-pull is
-     * switched on, so enabling it does not trigger a bulk download of the card.
+     * Arms auto-pull at the current top of the card. Objects already on the card
+     * are marked as seen; only shots taken afterwards are pulled automatically.
      */
-    private fun syncAutoPullBaseline() {
-        scope.launch {
-            if (_state.value !is ConnState.Connected) return@launch
+    fun setAutoPull(enabled: Boolean) {
+        if (enabled) {
+            val max = allHandles.maxOrNull() ?: -1
+            if (max >= 0) settings.autoPullBaseline = max
             for (file in _files.value) settings.markImported(file.handle, file.size)
+            _importsVersion.value++
         }
+        settings.setAutoPull(enabled)
+    }
+
+    /**
+     * Keeps the baseline sane when the card changed underneath us (format or a
+     * different card): stale high water marks would otherwise block every pull.
+     */
+    private fun reconcileBaseline() {
+        val max = allHandles.maxOrNull() ?: return
+        val baseline = settings.autoPullBaseline
+        if (baseline < 0 || max < baseline) settings.autoPullBaseline = max
+    }
+
+    private fun syncAutoPullBaseline() = setAutoPull(true)
+
+    private fun candidateHosts(network: Network?): List<String> {
+        val out = LinkedHashSet<String>()
+        settings.lastHost.takeIf { it.isNotBlank() }?.let(out::add)
+        runCatching {
+            val cm = app.getSystemService(android.net.ConnectivityManager::class.java)
+            val active = network ?: cm?.activeNetwork
+            cm?.getLinkProperties(active)?.routes?.forEach { route ->
+                route.gateway?.hostAddress?.let { out += it }
+            }
+        }
+        out += CameraDiscovery.defaults()
+        return out.toList()
     }
 
     fun humanError(e: Throwable): String = when (e) {

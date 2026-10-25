@@ -29,6 +29,15 @@ class SettingsStore(context: Context) {
         get() = prefs.getString(KEY_HOST, "") ?: ""
         set(value) = prefs.edit().putString(KEY_HOST, value).apply()
 
+    /**
+     * Highest object handle that existed when auto-pull was switched on. Objects
+     * with a handle above this one were shot afterwards, so only those are pulled
+     * automatically — enabling the toggle never re-downloads the whole card.
+     */
+    var autoPullBaseline: Int
+        get() = prefs.getInt(KEY_BASELINE, -1)
+        set(value) = prefs.edit().putInt(KEY_BASELINE, value).apply()
+
     fun setAutoPull(enabled: Boolean) {
         autoPull.value = enabled
         prefs.edit().putBoolean(KEY_AUTO_PULL, enabled).apply()
@@ -74,6 +83,7 @@ class SettingsStore(context: Context) {
         private const val KEY_SSID = "last_ssid"
         private const val KEY_PASS = "last_pass"
         private const val KEY_HOST = "last_host"
+        private const val KEY_BASELINE = "auto_pull_baseline"
         private const val KEY_DONE = "done"
 
         const val DEFAULT_CHUNK = 4 * 1024 * 1024

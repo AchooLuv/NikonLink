@@ -22,11 +22,11 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
@@ -39,11 +39,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,6 +72,46 @@ private enum class LibraryFilter(val label: String) {
     RAW("RAW"),
 }
 
+/**
+ * Bounded bitmap cache for the grid. Evicted cells fall back to the repository's
+ * byte cache and are decoded again on demand, so scrolling a 5000-shot card
+ * cannot balloon into hundreds of megabytes of bitmaps.
+ */
+private class ThumbStore(private val maxBytes: Long = 32L * 1024 * 1024) {
+    val entries = mutableStateMapOf<Int, Bitmap?>()
+    private val order = LinkedHashMap<Int, Long>(32, 0.75f, true)
+    private var used = 0L
+
+    operator fun get(handle: Int): Bitmap? = entries[handle]
+
+    fun put(handle: Int, bitmap: Bitmap) {
+        val size = bitmap.byteCount.toLong()
+        if (size > maxBytes) {
+            entries[handle] = null
+            return
+        }
+        used += size - (order[handle] ?: 0L)
+        order[handle] = size
+        entries[handle] = bitmap
+        trim()
+    }
+
+    fun markEmpty(handle: Int) {
+        entries[handle] = null
+        order.remove(handle)?.let { used -= it }
+    }
+
+    private fun trim() {
+        val iterator = order.entries.iterator()
+        while (used > maxBytes && order.size > 1 && iterator.hasNext()) {
+            val oldest = iterator.next()
+            used -= oldest.value
+            entries.remove(oldest.key)
+            iterator.remove()
+        }
+    }
+}
+
 @Composable
 fun BrowseScreen(repo: NikonLinkRepository) {
     val state by repo.state.collectAsStateWithLifecycle()
@@ -78,11 +119,11 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val busy by repo.libraryBusy.collectAsStateWithLifecycle()
     val hasMore by repo.hasMore.collectAsStateWithLifecycle()
     val progress by repo.progress.collectAsStateWithLifecycle()
+    val importsRev by repo.importsVersion.collectAsStateWithLifecycle()
 
     var filter by remember { mutableStateOf(LibraryFilter.ALL) }
     var selection by remember { mutableStateOf(setOf<Int>()) }
-    val thumbs = remember { mutableStateMapOf<Int, Bitmap?>() }
-    val gridState = rememberLazyGridState()
+    val thumbs = remember { ThumbStore() }
 
     val connected = state is ConnState.Connected
     val visible = remember(files, filter) {
@@ -94,6 +135,9 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                 LibraryFilter.RAW -> file.kind == FileKind.RAW
             }
         }
+    }
+    val imported = remember(files, importsRev) {
+        files.filter { repo.isImported(it) }.map { it.handle }.toSet()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -108,7 +152,7 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                     when {
                         !connected -> "相机未连接"
                         busy && files.isEmpty() -> "正在读取存储卡…"
-                        else -> "${files.size} 个文件 · 相册预览走 JPEG 缩略图"
+                        else -> "${files.size} 个文件 · 预览使用相机 JPEG 缩略图"
                     },
                     color = NikonLinkTheme.colors.dim,
                     fontSize = 12.sp,
@@ -150,13 +194,16 @@ fun BrowseScreen(repo: NikonLinkRepository) {
             }
         }
 
-        if (progress.active) {
+        if (progress.active || progress.message != null) {
             DownloadBanner(
                 name = progress.fileName,
                 fraction = progress.totalFraction,
                 speed = progress.speed,
                 index = progress.index,
                 count = progress.count,
+                active = progress.active,
+                message = progress.message,
+                onCancel = { repo.cancelDownloads() },
             )
         }
 
@@ -168,7 +215,6 @@ fun BrowseScreen(repo: NikonLinkRepository) {
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
-                    state = gridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 130.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -177,19 +223,16 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                     items(visible, key = { it.handle }) { file ->
                         ThumbCell(
                             file = file,
-                            bitmap = thumbs[file.handle],
+                            store = thumbs,
                             selected = file.handle in selection,
-                            imported = repo.isImported(file),
-                            onLoad = {
-                                if (!thumbs.containsKey(file.handle)) {
-                                    thumbs[file.handle] = null
-                                    repo.thumbnail(file.handle)?.let { bytes ->
-                                        thumbs[file.handle] = decodeThumbnail(bytes)
-                                    }
-                                }
-                            },
+                            imported = file.handle in imported,
+                            load = { repo.thumbnail(file.handle) },
                             onClick = {
-                                selection = if (file.handle in selection) selection - file.handle else selection + file.handle
+                                selection = if (file.handle in selection) {
+                                    selection - file.handle
+                                } else {
+                                    selection + file.handle
+                                }
                             },
                         )
                     }
@@ -231,13 +274,23 @@ fun BrowseScreen(repo: NikonLinkRepository) {
 @Composable
 private fun ThumbCell(
     file: CameraFile,
-    bitmap: Bitmap?,
+    store: ThumbStore,
     selected: Boolean,
     imported: Boolean,
-    onLoad: suspend () -> Unit,
+    load: suspend () -> ByteArray?,
     onClick: () -> Unit,
 ) {
-    androidx.compose.runtime.LaunchedEffect(file.handle) { onLoad() }
+    val bitmap = store[file.handle]
+
+    // Re-runs when the entry was never attempted (null + no record) or when it was
+    // evicted from the bounded cache; failures are recorded so they do not loop.
+    LaunchedEffect(file.handle, bitmap == null) {
+        if (bitmap == null) {
+            val bytes = load()
+            val decoded = bytes?.let { decodeThumbnail(it) }
+            if (decoded != null) store.put(file.handle, decoded) else store.markEmpty(file.handle)
+        }
+    }
 
     Box(
         Modifier
@@ -312,11 +365,7 @@ private fun ThumbCell(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                formatBytes(file.size),
-                color = PaperDim,
-                fontSize = 9.sp,
-            )
+            Text(formatBytes(file.size), color = PaperDim, fontSize = 9.sp)
         }
     }
 }
@@ -368,33 +417,47 @@ private fun DownloadBanner(
     speed: Long,
     index: Int,
     count: Int,
+    active: Boolean,
+    message: String?,
+    onCancel: () -> Unit,
 ) {
     Column(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .background(InkCard, RoundedCornerShape(16.dp))
-            .padding(14.dp),
+            .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                name,
-                color = Paper,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Text("$index / $count", color = PaperDim, fontSize = 11.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        if (active) name else "传输已结束",
+                        color = Paper,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (active) {
+                        Text("$index / $count", color = PaperDim, fontSize = 11.sp)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                ThinProgress(if (active) fraction else 1f)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    message ?: "${(fraction * 100).toInt()}% · ${formatSpeed(speed)}",
+                    color = NikonLinkTheme.colors.dim,
+                    fontSize = 10.5.sp,
+                )
+            }
+            if (active) {
+                IconButton(onClick = onCancel) {
+                    Icon(Icons.Rounded.Close, contentDescription = "取消", tint = PaperDim, modifier = Modifier.size(18.dp))
+                }
+            }
         }
-        Spacer(Modifier.height(8.dp))
-        ThinProgress(fraction)
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "${(fraction * 100).toInt()}% · ${formatSpeed(speed)}",
-            color = NikonLinkTheme.colors.dim,
-            fontSize = 10.5.sp,
-        )
     }
 }
 
