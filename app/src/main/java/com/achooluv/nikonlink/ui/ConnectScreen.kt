@@ -70,6 +70,7 @@ fun ConnectScreen(
     val identity by repo.identity.collectAsStateWithLifecycle()
     val profile by repo.profile.collectAsStateWithLifecycle()
     val settings = repo.settings
+    val chunkSize by settings.chunkSize.collectAsStateWithLifecycle()
 
     var manualDialog by remember { mutableStateOf(false) }
     val connected = state is ConnState.Connected
@@ -228,7 +229,7 @@ fun ConnectScreen(
                     Spacer(Modifier.height(14.dp))
                     InfoRow("固件", id.firmware.ifBlank { "—" })
                     InfoRow("序列号", id.serial.ifBlank { "—" })
-                    InfoRow("传输分块", SettingsStore.chunkLabel(settings.chunkSize.value))
+                    InfoRow("传输分块", SettingsStore.chunkLabel(chunkSize))
                     InfoRow(
                         "断点续传",
                         if (profile?.supportsPartialObject == true) "支持" else "相机不支持",

@@ -103,6 +103,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
 
     private var thumbLargeUnsupported = false
     private var allHandles: List<Int> = emptyList()
+    private val kindByHandle = HashMap<Int, com.achooluv.nikonlink.camera.FileKind>()
     private var loadedPages = 0
     private var connectJob: Job? = null
     private var keepAliveJob: Job? = null
@@ -169,6 +170,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 loadedPages = 0
                 allHandles = emptyList()
                 _files.value = emptyList()
+                kindByHandle.clear()
                 thumbnailCache.evictAll()
 
                 val storage = readStorage()
@@ -234,6 +236,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
             _identity.value = null
             _files.value = emptyList()
             allHandles = emptyList()
+            kindByHandle.clear()
             thumbnailCache.evictAll()
         }
     }
@@ -350,6 +353,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 allHandles = handles.distinct().sortedDescending()
                 loadedPages = 0
                 _files.value = emptyList()
+                kindByHandle.clear()
                 reconcileBaseline()
                 loadPage()
             } catch (e: Exception) {
@@ -386,6 +390,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
             if (info.isFolder) continue
             val file = CameraFile.from(info, handle)
             if (file.kind == com.achooluv.nikonlink.camera.FileKind.OTHER) continue
+            kindByHandle[file.handle] = file.kind
             loaded += file
         }
         loadedPages++
@@ -445,6 +450,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     /** Loads a JPEG preview for [handle]; returns null when the body has none. */    suspend fun thumbnail(handle: Int): ByteArray? {
+        // Honour the "RAW 使用相机缩略图" switch: with it off, RAW cells stay as placeholders.
+        if (!settings.showRawThumbnails.value &&
+            kindByHandle[handle] == com.achooluv.nikonlink.camera.FileKind.RAW
+        ) {
+            return null
+        }
         thumbnailCache.get(handle)?.let { return it }
         thumbMutex.withLock {
             thumbnailCache.get(handle)?.let { return it }

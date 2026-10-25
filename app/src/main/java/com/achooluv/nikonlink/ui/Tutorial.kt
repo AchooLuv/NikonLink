@@ -103,8 +103,7 @@ val tutorialSections = listOf(
 )
 
 @Composable
-fun TutorialSheet(onDismiss: () -> Unit) {
-    androidx.compose.material3.ModalBottomSheet(
+fun TutorialSheet(onDismiss: () -> Unit) {    androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = InkRaised,
         dragHandle = {
@@ -202,33 +201,5 @@ private fun TutorialRow(step: TutorialStep) {
                 }
             }
         }
-    }
-}
-
-@Composable
-fun TutorialButton(onClick: () -> Unit) {
-    androidx.compose.material3.OutlinedButton(
-        onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, NikonLinkTheme.colors.line),
-    ) {
-        Text("连接教程", color = Paper, fontSize = 14.sp)
-    }
-}
-
-@Composable
-fun TutorialLinkRow(onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.Start,
-    ) {
-        Text(
-            "查看连接教程 →",
-            color = NikonYellow,
-            fontSize = 13.sp,
-            modifier = Modifier.padding(4.dp).clickableNoIndication(onClick),
-        )
     }
 }

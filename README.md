@@ -93,6 +93,13 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 
 ## 更新日志
 
+**v0.1.8**
+- 质量收尾：`lint` 从 2 error / 4 warning 降到 **0 error / 3 warning**（剩余为依赖版本、ChromeOS ABI、v26 资源目录提示）
+- 修复：Android 12+ 精确位置权限必须同时声明 `ACCESS_COARSE_LOCATION`
+- 修复：连接页在 composition 中读取 `StateFlow.value`，改为 `collectAsStateWithLifecycle`
+- 修复：「RAW 使用相机缩略图」开关此前只存不改行为，现在关闭后 RAW 不再请求缩略图
+- 清理无用代码（`Tag`、`TutorialButton`、`TutorialLinkRow`、若干未用工具函数与冗余 SDK 判断）
+
 **v0.1.7**
 - 断线重连会重新申请相机 Wi-Fi：手机漂回蜂窝网络后不再永远连不上
 - 重连前先探测相机端口，不可达就立刻进入下一次退避，不再每次空等 12 秒超时

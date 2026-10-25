@@ -68,8 +68,6 @@ class Downloader(
     private fun partFile(file: CameraFile): File =
         File(incomingDir(), "${file.handle}_${file.size}.part")
 
-    fun hasPartial(file: CameraFile): Boolean = runCatching { partFile(file).length() > 0 }.getOrDefault(false)
-
     /**
      * Downloads [files] sequentially. Existing `.part` files resume from their
      * current length (GetPartialObject), so an interrupted RAW or movie continues
@@ -288,16 +286,13 @@ class Downloader(
         }.getOrDefault(false)
     }
 
-    private fun mimeFor(file: CameraFile): String = when (file.extension) {        "JPG", "JPEG" -> "image/jpeg"
+    private fun mimeFor(file: CameraFile): String = when (file.extension) {
+        "JPG", "JPEG" -> "image/jpeg"
         "NEF" -> "image/x-nikon-nef"
         "MOV" -> "video/quicktime"
         "MP4" -> "video/mp4"
         else -> "application/octet-stream"
     }
-
-    fun savedFolderHint(): String = "Pictures/NikonLink · Movies/NikonLink"
-
-    fun describeSize(bytes: Long): String = String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
 }
 
 /** Smallest chunk NikonLink falls back to before giving up on a body. */
