@@ -79,16 +79,17 @@ fun ConnectScreen(
     val context = LocalContext.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(bottom = 120.dp),
-    ) {
+    Column(Modifier.fillMaxSize()) {
         Spacer(Modifier.height(6.dp))
         ScreenHeader("连接", "尼康 Z 系列无线图传 · 相机直连，不经过电脑")
 
-        Spacer(Modifier.height(20.dp))
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 120.dp),
+        ) {
+            Spacer(Modifier.height(20.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             StatusEmblem(state)
         }
@@ -290,6 +291,7 @@ fun ConnectScreen(
                     )
                 }
             }
+        }
         }
     }
 

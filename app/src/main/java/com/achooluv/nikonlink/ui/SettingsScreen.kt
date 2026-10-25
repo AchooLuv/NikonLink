@@ -61,18 +61,21 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     var confirmClear by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(start = 20.dp, end = 20.dp, bottom = 120.dp),
-    ) {
-        Spacer(Modifier.height(6.dp))
-        Text("设置", color = Paper, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(3.dp))
-        Text("只保留必要选项", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.padding(horizontal = 20.dp)) {
+            Spacer(Modifier.height(6.dp))
+            Text("设置", color = Paper, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(3.dp))
+            Text("只保留必要选项", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
+        }
 
-        Spacer(Modifier.height(22.dp))
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, bottom = 120.dp),
+        ) {
+            Spacer(Modifier.height(22.dp))
         SectionTitle("传输")
         Spacer(Modifier.height(10.dp))
         NikonCard {
@@ -291,6 +294,7 @@ fun SettingsScreen(repo: NikonLinkRepository) {
         }
 
         Spacer(Modifier.height(40.dp))
+        }
     }
 
     if (confirmReset) {
