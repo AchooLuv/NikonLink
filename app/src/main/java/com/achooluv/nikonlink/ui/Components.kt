@@ -9,6 +9,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -162,4 +163,39 @@ fun Mono(text: String, color: Color = Paper, size: Int = 13) {
         fontSize = size.sp,
         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
     )
+}
+
+/** Two-segment switch: camera hotspot (AP) vs same-network (STA). */
+@Composable
+fun ModeSelectorRow(
+    mode: com.achooluv.nikonlink.data.ConnectMode,
+    onChange: (com.achooluv.nikonlink.data.ConnectMode) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .background(InkRaised, RoundedCornerShape(14.dp))
+            .padding(4.dp),
+    ) {
+        com.achooluv.nikonlink.data.ConnectMode.entries.forEach { option ->
+            val selected = option == mode
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(if (selected) NikonYellow else Color.Transparent)
+                    .clickable { onChange(option) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    option.shortLabel,
+                    color = if (selected) Color(0xFF161200) else PaperDim,
+                    fontSize = 12.sp,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                )
+            }
+        }
+    }
 }

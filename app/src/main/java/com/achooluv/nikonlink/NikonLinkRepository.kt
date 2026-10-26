@@ -6,8 +6,10 @@ import android.util.LruCache
 import com.achooluv.nikonlink.camera.CameraFile
 import com.achooluv.nikonlink.camera.CameraIdentity
 import com.achooluv.nikonlink.camera.CameraProfile
+import com.achooluv.nikonlink.data.ConnectMode
 import com.achooluv.nikonlink.data.SettingsStore
 import com.achooluv.nikonlink.net.CameraWifi
+import com.achooluv.nikonlink.net.LanScanner
 import com.achooluv.nikonlink.ptp.Ptp
 import com.achooluv.nikonlink.ptp.PtpEvent
 import com.achooluv.nikonlink.ptp.PtpIpClient
@@ -44,6 +46,11 @@ data class CameraExtras(
     val exposure: String? = null,
     val shutterCount: Int? = null,
 )
+
+/** Shown when Wi-Fi station mode cannot find a camera on the current LAN. */
+private const val STA_NOT_FOUND =
+    "没在局域网里找到相机：确认相机和手机连的是同一个路由器 Wi-Fi，且路由器没有开启「AP 隔离」；" +
+        "也可以点「手动 IP」直接填相机地址。"
 
 /** Exponential backoff (seconds) used while re-establishing a dropped link. */
 internal fun reconnectDelaySeconds(attempt: Int): Int {
@@ -139,9 +146,15 @@ class NikonLinkRepository private constructor(private val app: Application) {
      * Joins the camera AP (when [ssid] is given), locates the PTP/IP responder and
      * opens a session. Safe to call again to retry.
      */
-    fun connect(ssid: String? = null, passphrase: String? = null, host: String? = null) {
+    fun connect(
+        ssid: String? = null,
+        passphrase: String? = null,
+        host: String? = null,
+        mode: ConnectMode = settings.mode.value,
+    ) {
         connectJob?.cancel()
         userDisconnected = false
+        settings.setMode(mode)
         connectJob = scope.launch {
             try {
                 _state.value = ConnState.Connecting("正在准备连接…")
@@ -156,24 +169,37 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 wifi.release()
 
                 var network: Network? = null
-                val targetSsid = ssid?.takeIf { it.isNotBlank() } ?: settings.lastSsid
-                val targetPass = passphrase ?: settings.lastPassphrase
+                if (mode == ConnectMode.AP) {
+                    val targetSsid = ssid?.takeIf { it.isNotBlank() } ?: settings.lastSsid
+                    val targetPass = passphrase ?: settings.lastPassphrase
 
-                if (targetSsid.isNotBlank() && !wifi.looksLikeCamera(wifi.currentSsid())) {
-                    _state.value = ConnState.Connecting("正在加入相机 Wi-Fi…")
-                    network = wifi.requestNetwork(targetSsid, targetPass)
-                } else if (wifi.looksLikeCamera(wifi.currentSsid())) {
-                    network = wifi.network
+                    if (targetSsid.isNotBlank() && !wifi.looksLikeCamera(wifi.currentSsid())) {
+                        _state.value = ConnState.Connecting("正在加入相机 Wi-Fi…")
+                        network = wifi.requestNetwork(targetSsid, targetPass)
+                    } else if (wifi.looksLikeCamera(wifi.currentSsid())) {
+                        network = wifi.network
+                    }
+                    if (network != null) client.socketFactory = network.socketFactory
+                } else {
+                    // STA: the phone stays on its normal Wi-Fi; the camera is a peer
+                    // on that same LAN, so nothing is joined here.
+                    Diagnostics.log("STA 模式：使用当前局域网（${wifi.currentSsid() ?: "未知网络"}）")
                 }
 
-                if (network != null) client.socketFactory = network.socketFactory
-
-                _state.value = ConnState.Connecting("正在查找相机…")
+                _state.value = ConnState.Connecting(
+                    if (mode == ConnectMode.STA) "正在扫描局域网…" else "正在查找相机…",
+                )
                 val candidates = candidateHosts(network)
-                val resolved = host?.takeIf { it.isNotBlank() }
-                    ?: candidates.firstOrNull { CameraDiscovery.probe(it, Ptp.PORT, network, 1200) }
-                    ?: CameraDiscovery.find(Ptp.PORT, network, candidates)
-                    ?: CameraWifi.DEFAULT_CAMERA_HOST
+                val resolved = if (mode == ConnectMode.STA) {
+                    host?.takeIf { it.isNotBlank() }
+                        ?: scanLanForCamera()
+                        ?: throw IOException(STA_NOT_FOUND)
+                } else {
+                    host?.takeIf { it.isNotBlank() }
+                        ?: candidates.firstOrNull { CameraDiscovery.probe(it, Ptp.PORT, network, 1200) }
+                        ?: CameraDiscovery.find(Ptp.PORT, network, candidates)
+                        ?: CameraWifi.DEFAULT_CAMERA_HOST
+                }
 
                 _state.value = ConnState.Connecting("正在建立 PTP/IP 会话…")
                 Diagnostics.log("连接 $resolved:${Ptp.PORT}")
@@ -211,9 +237,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 )
                 Diagnostics.log("存储可用 ${storage.first} / ${storage.second}")
 
-                if (targetSsid.isNotBlank()) {
-                    settings.lastSsid = targetSsid
-                    settings.lastPassphrase = targetPass
+                if (mode == ConnectMode.AP) {
+                    val savedSsid = ssid?.takeIf { it.isNotBlank() } ?: settings.lastSsid
+                    if (savedSsid.isNotBlank()) {
+                        settings.lastSsid = savedSsid
+                        settings.lastPassphrase = passphrase ?: settings.lastPassphrase
+                    }
                 }
                 settings.lastHost = resolved
 
@@ -249,6 +278,15 @@ class NikonLinkRepository private constructor(private val app: Application) {
             _queue.value = emptyList()
             Diagnostics.log("已重置本地连接与下载记录")
         }
+    }
+
+    /** Rescans the current LAN for a camera (Wi-Fi station mode). */
+    private suspend fun scanLanForCamera(): String? {
+        val found = LanScanner.scan(Ptp.PORT) { done ->
+            _state.value = ConnState.Connecting("正在扫描局域网…（已检查 $done 个地址）")
+        }
+        Diagnostics.log("局域网扫描结果：${found.ifEmpty { listOf("未发现相机") }.joinToString()}")
+        return found.firstOrNull()
     }
 
     /** Aggregates free/total bytes across every card the body exposes. */
@@ -337,10 +375,17 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 // The phone may have roamed back to cellular, which would leave the
                 // camera AP unreachable forever. Re-request the network, then probe
                 // before spending 12 s on a doomed TCP connect.
-                val network = ensureCameraNetwork()
+                val mode = settings.mode.value
+                val network = if (mode == ConnectMode.AP) ensureCameraNetwork() else null
                 client.socketFactory = network?.socketFactory ?: javax.net.SocketFactory.getDefault()
 
-                val host = resolveHost(network) ?: currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST }
+                val host = if (mode == ConnectMode.STA) {
+                    settings.lastHost.takeIf {
+                        it.isNotBlank() && CameraDiscovery.probe(it, Ptp.PORT, null, 800)
+                    } ?: scanLanForCamera() ?: currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST }
+                } else {
+                    resolveHost(network) ?: currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST }
+                }
                 if (!CameraDiscovery.probe(host, Ptp.PORT, network, 1500)) {
                     Diagnostics.log("重连第 $attempt 次：$host 不可达")
                     continue

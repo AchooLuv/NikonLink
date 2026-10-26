@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -58,6 +60,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.achooluv.nikonlink.ConnState
 import com.achooluv.nikonlink.NikonLinkRepository
 import com.achooluv.nikonlink.camera.formatBytes
+import com.achooluv.nikonlink.data.ConnectMode
 import com.achooluv.nikonlink.data.SettingsStore
 
 @Composable
@@ -72,6 +75,7 @@ fun ConnectScreen(
     val settings = repo.settings
     val chunkSize by settings.chunkSize.collectAsStateWithLifecycle()
     val extras by repo.extras.collectAsStateWithLifecycle()
+    val mode by settings.mode.collectAsStateWithLifecycle()
 
     var manualDialog by remember { mutableStateOf(false) }
     val connected = state is ConnState.Connected
@@ -105,7 +109,7 @@ fun ConnectScreen(
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            statusSubtitle(state),
+            statusSubtitle(state, mode),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 36.dp),
             color = NikonLinkTheme.colors.dim,
             fontSize = 12.sp,
@@ -113,15 +117,23 @@ fun ConnectScreen(
             textAlign = TextAlign.Center,
         )
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(18.dp))
+        ModeSelectorRow(
+            mode = mode,
+            onChange = { settings.setMode(it) },
+            modifier = Modifier.padding(horizontal = 20.dp),
+        )
+
+        Spacer(Modifier.height(22.dp))
         Column(Modifier.padding(horizontal = 20.dp)) {
             Button(
                 onClick = {
                     when {
                         connected -> repo.disconnect()
                         busy -> Unit
+                        mode == ConnectMode.STA -> repo.connect(mode = mode)
                         settings.lastSsid.isBlank() -> manualDialog = true
-                        else -> repo.connect()
+                        else -> repo.connect(mode = mode)
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(54.dp),
@@ -139,6 +151,7 @@ fun ConnectScreen(
                         connected -> "断开连接"
                         state is ConnState.Connecting -> "正在连接…"
                         state is ConnState.Reconnecting -> "等待重连…"
+                        mode == ConnectMode.STA -> "扫描并连接"
                         else -> "连接相机"
                     },
                     fontSize = 16.sp,
@@ -162,7 +175,11 @@ fun ConnectScreen(
                     shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
                 ) {
-                    Text("手动 SSID", color = Paper, fontSize = 13.sp)
+                    Text(
+                        if (mode == ConnectMode.STA) "手动 IP" else "手动 SSID",
+                        color = Paper,
+                        fontSize = 13.sp,
+                    )
                 }
             }
 
@@ -277,18 +294,34 @@ fun ConnectScreen(
                 }
             } else if (!connected) {
                 NikonCard {
-                    Caption("三步连上相机")
-                    Spacer(Modifier.height(10.dp))
-                    StepLine("1", "相机菜单打开「连接至智能设备 → Wi-Fi」")
-                    StepLine("2", "手机连上相机显示的 NIKON_ 网络")
-                    StepLine("3", "回到这里点「连接相机」")
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        "全程不经过电脑；连上后照片、视频与 RAW 都可以直接下载。",
-                        color = NikonLinkTheme.colors.dim,
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp,
-                    )
+                    if (mode == ConnectMode.STA) {
+                        Caption("三步连上相机（同一 Wi-Fi）")
+                        Spacer(Modifier.height(10.dp))
+                        StepLine("1", "相机：网络菜单 → 连接至智能设备 → Wi-Fi 连接（STA 模式）")
+                        StepLine("2", "让相机加入家里的路由器，手机连同一个 Wi-Fi")
+                        StepLine("3", "回到这里点「扫描并连接」")
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "STA 模式下手机仍可上网；App 会扫描当前网段里的相机，" +
+                                "找不到时可用「手动 IP」直接填相机地址。",
+                            color = NikonLinkTheme.colors.dim,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                        )
+                    } else {
+                        Caption("三步连上相机")
+                        Spacer(Modifier.height(10.dp))
+                        StepLine("1", "相机菜单打开「连接至智能设备 → Wi-Fi」")
+                        StepLine("2", "手机连上相机显示的 NIKON_ 网络")
+                        StepLine("3", "回到这里点「连接相机」")
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "全程不经过电脑；连上后照片、视频与 RAW 都可以直接下载。",
+                            color = NikonLinkTheme.colors.dim,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                        )
+                    }
                 }
             }
         }
@@ -297,13 +330,14 @@ fun ConnectScreen(
 
     if (manualDialog) {
         ManualConnectDialog(
+            mode = mode,
             initialSsid = settings.lastSsid,
             initialPass = settings.lastPassphrase,
             initialHost = settings.lastHost.ifBlank { "192.168.1.1" },
             onDismiss = { manualDialog = false },
             onConnect = { ssid, pass, host ->
                 manualDialog = false
-                repo.connect(ssid = ssid, passphrase = pass, host = host)
+                repo.connect(ssid = ssid, passphrase = pass, host = host, mode = mode)
             },
         )
     }
@@ -461,6 +495,7 @@ private fun StatusEmblem(state: ConnState) {
 
 @Composable
 private fun ManualConnectDialog(
+    mode: ConnectMode,
     initialSsid: String,
     initialPass: String,
     initialHost: String,
@@ -474,45 +509,64 @@ private fun ManualConnectDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = InkRaised,
-        title = { Text("手动连接", color = Paper, fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+        title = {
+            Text(
+                if (mode == ConnectMode.STA) "手动 IP" else "手动连接",
+                color = Paper,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        },
         text = {
             Column {
                 Text(
-                    "相机屏幕上的网络名与密码。留空密码会直接连接已保存的网络。",
+                    if (mode == ConnectMode.STA) {
+                        "填相机在局域网里的地址。可以在相机的 STA 连接设置里看到它分配到（或手动设置）的 IP。"
+                    } else {
+                        "相机屏幕上的网络名与密码。留空密码会直接连接已保存的网络。"
+                    },
                     color = PaperDim,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
                 )
                 Spacer(Modifier.height(14.dp))
-                OutlinedTextField(
-                    value = ssid,
-                    onValueChange = { ssid = it },
-                    label = { Text("SSID", fontSize = 12.sp) },
-                    placeholder = { Text("NIKON_Z50II_12345678", fontSize = 12.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = pass,
-                    onValueChange = { pass = it },
-                    label = { Text("密码", fontSize = 12.sp) },
-                    placeholder = { Text("8 位数字", fontSize = 12.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
+                if (mode == ConnectMode.AP) {
+                    OutlinedTextField(
+                        value = ssid,
+                        onValueChange = { ssid = it },
+                        label = { Text("SSID", fontSize = 12.sp) },
+                        placeholder = { Text("NIKON_Z50II_12345678", fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = pass,
+                        onValueChange = { pass = it },
+                        label = { Text("密码", fontSize = 12.sp) },
+                        placeholder = { Text("8 位数字", fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
                 OutlinedTextField(
                     value = host,
                     onValueChange = { host = it },
-                    label = { Text("相机 IP（可选）", fontSize = 12.sp) },
-                    placeholder = { Text("192.168.1.1", fontSize = 12.sp) },
+                    label = {
+                        Text(if (mode == ConnectMode.STA) "相机 IP" else "相机 IP（可选）", fontSize = 12.sp)
+                    },
+                    placeholder = { Text("192.168.1.50", fontSize = 12.sp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "相机不在 192.168.1.x 网段时，在这里填它的实际地址。",
+                    if (mode == ConnectMode.STA) {
+                        "STA 模式下相机通常由路由器分配地址，形如 192.168.1.x。"
+                    } else {
+                        "相机不在 192.168.1.x 网段时，在这里填它的实际地址。"
+                    },
                     color = PaperDim.copy(alpha = 0.8f),
                     fontSize = 10.5.sp,
                     lineHeight = 15.sp,
@@ -538,8 +592,12 @@ private fun statusTitle(state: ConnState): String = when (state) {
     is ConnState.Error -> "连接失败"
 }
 
-private fun statusSubtitle(state: ConnState): String = when (state) {
-    is ConnState.Idle -> "打开相机 Wi-Fi，让手机连上 NIKON_ 网络后点「连接相机」。"
+private fun statusSubtitle(state: ConnState, mode: ConnectMode): String = when (state) {
+    is ConnState.Idle -> if (mode == ConnectMode.STA) {
+        "让相机连上同一个路由器 Wi-Fi，再点「扫描并连接」；找不到就用「手动 IP」。"
+    } else {
+        "打开相机 Wi-Fi，让手机连上 NIKON_ 网络后点「连接相机」。"
+    }
     is ConnState.Connecting -> state.step
     is ConnState.Connected -> "相机会话已建立 · 可以浏览与下载了"
     is ConnState.Reconnecting -> "第 ${state.attempt} 次重试，${state.waitSeconds} 秒后开始"

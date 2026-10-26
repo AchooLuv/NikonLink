@@ -18,6 +18,12 @@ class SettingsStore(context: Context) {
     val pairJpeg = MutableStateFlow(prefs.getBoolean(KEY_PAIR_JPEG, true))
     val chunkSize = MutableStateFlow(prefs.getInt(KEY_CHUNK, DEFAULT_CHUNK))
     val keepAliveSeconds = MutableStateFlow(prefs.getInt(KEY_KEEPALIVE_SECONDS, 15))
+    val mode = MutableStateFlow(ConnectMode.from(prefs.getString(KEY_MODE, null)))
+
+    fun setMode(value: ConnectMode) {
+        mode.value = value
+        prefs.edit().putString(KEY_MODE, value.key).apply()
+    }
 
     fun setKeepAliveSeconds(seconds: Int) {
         val safe = seconds.coerceIn(5, 120)
@@ -98,6 +104,7 @@ class SettingsStore(context: Context) {
         pairJpeg.value = true
         chunkSize.value = DEFAULT_CHUNK
         keepAliveSeconds.value = 15
+        mode.value = ConnectMode.AP
     }
 
     companion object {
@@ -112,6 +119,7 @@ class SettingsStore(context: Context) {
         private const val KEY_HOST = "last_host"
         private const val KEY_BASELINE = "auto_pull_baseline"
         private const val KEY_DONE = "done"
+        private const val KEY_MODE = "connect_mode"
 
         const val DEFAULT_CHUNK = 4 * 1024 * 1024
 

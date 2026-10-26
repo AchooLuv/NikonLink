@@ -1,5 +1,3 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-
 package com.achooluv.nikonlink.ui
 
 import androidx.compose.foundation.background
@@ -7,20 +5,34 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.achooluv.nikonlink.data.ConnectMode
 
 data class TutorialStep(
     val index: Int,
@@ -34,8 +46,8 @@ data class TutorialSection(
     val steps: List<TutorialStep>,
 )
 
-/** Camera-side instructions for Nikon Z bodies (Z50II wording, generic fallbacks). */
-val tutorialSections = listOf(
+/** Camera-side instructions for Wi-Fi access point mode (camera hosts the network). */
+val tutorialSectionsAp = listOf(
     TutorialSection(
         title = "第一次连接",
         steps = listOf(
@@ -102,64 +114,153 @@ val tutorialSections = listOf(
     ),
 )
 
-@Composable
-fun TutorialSheet(onDismiss: () -> Unit) {    androidx.compose.material3.ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = InkRaised,
-        dragHandle = {
-            Box(
-                Modifier
-                    .padding(top = 12.dp, bottom = 8.dp)
-                    .height(4.dp)
-                    .fillMaxWidth(0.12f)
-                    .background(InkLine, RoundedCornerShape(2.dp)),
-            )
-        },
-    ) {
-        LazyColumn(
-            Modifier.fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                start = 20.dp,
-                end = 20.dp,
-                bottom = 32.dp,
+/** Instructions for Wi-Fi station mode: camera and phone share a router. */
+val tutorialSectionsSta = listOf(
+    TutorialSection(
+        title = "第一次连接",
+        steps = listOf(
+            TutorialStep(
+                1,
+                "让相机加入路由器",
+                "Z50II / Z8 / Z9：MENU → 网络菜单 → 连接至智能设备 → Wi-Fi 连接（STA 模式）→ 建立配置。\n" +
+                    "给配置起个名字 → 搜索 Wi-Fi 网络 → 选家里的路由器 SSID → 输入 Wi-Fi 密码。\n" +
+                    "IP 地址选「自动获取」即可（路由器没开 DHCP 时才需要手动填）。",
             ),
-        ) {
-            item {
-                Text("连接教程", color = Paper, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "照着做一遍，之后每次只需在 App 里点一次「连接相机」。",
-                    color = NikonLinkTheme.colors.dim,
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
-                )
-                Spacer(Modifier.height(20.dp))
+            TutorialStep(
+                2,
+                "手机连同一个路由器",
+                "手机连的是同一个路由器 Wi-Fi，不需要连相机的 NIKON_ 热点；此时手机仍可正常上网。\n" +
+                    "用手机热点也行：让相机加入手机热点，手机自己保持在这个热点上。",
+            ),
+            TutorialStep(
+                3,
+                "在 App 里切到「同一 Wi-Fi」",
+                "连接页顶部把模式切到「同一 Wi-Fi」，点「扫描并连接」。App 会扫描当前网段（如 192.168.1.x）里的 15740 端口。",
+            ),
+            TutorialStep(
+                4,
+                "找不到就手动填 IP",
+                "相机屏幕的 STA 连接信息里能看到它拿到的 IP，形如 192.168.1.50。\n" +
+                    "回到 App 点「手动 IP」填进去即可。",
+            ),
+        ),
+    ),
+    TutorialSection(
+        title = "保持稳定",
+        steps = listOf(
+            TutorialStep(
+                1,
+                "关掉路由器的「AP 隔离」",
+                "很多路由器默认开启「AP 隔离 / 客户端隔离 / 访客网络」，会让同一 Wi-Fi 下的设备互相不可见——这是 STA 模式找不到相机最常见的原因。",
+            ),
+            TutorialStep(
+                2,
+                "确认在同一个网段",
+                "2.4G 与 5G 如果用了不同 SSID，相机和手机要连同一个；路由器的访客网络通常有独立网段，也不要用。",
+            ),
+            TutorialStep(
+                3,
+                "别让 VPN / 代理拦住局域网",
+                "部分 VPN 会接管局域网流量，连接和传输期间先关掉 VPN、代理或「私人 DNS」。",
+            ),
+            TutorialStep(
+                4,
+                "相机省电与休眠",
+                "设定菜单 → 自动关机时间 → 10 分钟以上；STA 模式下相机屏幕仍会显示连接状态。",
+            ),
+        ),
+    ),
+    TutorialSection(
+        title = "连不上时",
+        steps = listOf(
+            TutorialStep(1, "先确认相机已连上路由器", "相机 STA 设置里应显示「连接完成」；没连上路由器时手机自然找不到它。"),
+            TutorialStep(2, "手动填一次 IP", "「手动 IP」比扫描更可靠，尤其是路由器开了隔离或网段不在 192.168.1.x 时。"),
+            TutorialStep(3, "看诊断日志", "设置 → 诊断 → 复制诊断信息，里面会记录「局域网扫描结果」，能看出扫到了哪些地址。"),
+            TutorialStep(4, "换回 AP 模式验证", "如果 STA 一直不行，先用「相机热点」模式确认相机与 PTP/IP 本身正常。"),
+        ),
+    ),
+)
+
+@Composable
+fun TutorialScreen(onDismiss: () -> Unit) {
+    var mode by remember { mutableStateOf(ConnectMode.AP) }
+    val sections = if (mode == ConnectMode.AP) tutorialSectionsAp else tutorialSectionsSta
+
+    Surface(Modifier.fillMaxSize(), color = Ink) {
+        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+            // Fixed header: never scrolls away, never lets content slide under the status bar.
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("连接教程", color = Paper, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        if (mode == ConnectMode.AP) {
+                            "相机热点：手机直接连相机"
+                        } else {
+                            "同一 Wi-Fi：相机与手机都连路由器"
+                        },
+                        color = NikonLinkTheme.colors.dim,
+                        fontSize = 12.sp,
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Rounded.Close, contentDescription = "关闭", tint = PaperDim)
+                }
             }
 
-            tutorialSections.forEach { section ->
-                item { SectionTitle(section.title) }
-                item { Spacer(Modifier.height(10.dp)) }
-                items(section.steps) { step -> TutorialRow(step) }
-                item { Spacer(Modifier.height(18.dp)) }
-            }
+            Spacer(Modifier.height(10.dp))
+            ModeSelectorRow(
+                mode = mode,
+                onChange = { mode = it },
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
 
-            item {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, NikonYellowDim, RoundedCornerShape(16.dp))
-                        .padding(16.dp),
-                ) {
-                    Column {
-                        Text("小提示", color = NikonYellow, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "JPEG 用来预览，RAW（NEF）会原样下载、不在 App 内解码；" +
-                                "视频和 RAW 都支持断点续传，中断后点同一个文件会接着传。",
-                            color = PaperDim,
-                            fontSize = 12.sp,
-                            lineHeight = 18.sp,
-                        )
+            LazyColumn(
+                Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 32.dp),
+            ) {
+                item {
+                    Text(
+                        if (mode == ConnectMode.AP) {
+                            "照着做一遍，之后每次只需在 App 里点一次「连接相机」。"
+                        } else {
+                            "相机加入家里的路由器后，手机在同一 Wi-Fi 下就能连上它，而且还能正常上网。"
+                        },
+                        color = NikonLinkTheme.colors.dim,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                    )
+                    Spacer(Modifier.height(18.dp))
+                }
+
+                sections.forEach { section ->
+                    item { SectionTitle(section.title) }
+                    item { Spacer(Modifier.height(10.dp)) }
+                    items(section.steps) { step -> TutorialRow(step) }
+                    item { Spacer(Modifier.height(18.dp)) }
+                }
+
+                item {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, NikonYellowDim, RoundedCornerShape(16.dp))
+                            .padding(16.dp),
+                    ) {
+                        Column {
+                            Text("小提示", color = NikonYellow, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "JPEG 用来预览，RAW（NEF）会原样下载、不在 App 内解码；" +
+                                    "视频和 RAW 都支持断点续传，中断后点同一个文件会接着传。",
+                                color = PaperDim,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp,
+                            )
+                        }
                     }
                 }
             }
@@ -175,7 +276,7 @@ private fun TutorialRow(step: TutorialStep) {
                 .height(22.dp)
                 .background(NikonYellow, RoundedCornerShape(11.dp))
                 .padding(horizontal = 8.dp),
-            contentAlignment = androidx.compose.ui.Alignment.Center,
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 step.index.toString(),
@@ -184,7 +285,6 @@ private fun TutorialRow(step: TutorialStep) {
                 fontWeight = FontWeight.Bold,
             )
         }
-        Spacer(Modifier.height(0.dp))
         Column(Modifier.padding(start = 12.dp)) {
             Text(step.title, color = Paper, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
@@ -203,3 +303,7 @@ private fun TutorialRow(step: TutorialStep) {
         }
     }
 }
+
+/** Kept for callers that still reference the old bottom-sheet name. */
+@Composable
+fun TutorialSheet(onDismiss: () -> Unit) = TutorialScreen(onDismiss)
