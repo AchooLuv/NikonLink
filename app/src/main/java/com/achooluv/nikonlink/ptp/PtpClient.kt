@@ -18,6 +18,11 @@ import kotlin.concurrent.withLock
  */
 class PtpIpClient(private val friendlyName: String) : Closeable {
 
+    private companion object {
+        /** Camera firmware drops connections that talk immediately after SYN-ACK. */
+        const val POST_CONNECT_DELAY_MS = 350L
+    }
+
     /** Fixed initiator GUID that Nikon's own app announces, so the body treats us as a known host. */
     private val guid: ByteArray = byteArrayOf(
         0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
@@ -59,6 +64,10 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
 
         val command = newSocket()
         command.connect(InetSocketAddress(host, port), connectTimeoutMs)
+        // Measured on a Z 50II: the body drops the connection when the first
+        // PTP/IP packet follows the TCP handshake immediately. A short pause
+        // makes Init_Command_Request reliably answered.
+        settleAfterConnect()
         val ack = runCatching { initCommand(command) }.getOrElse { e ->
             runCatching { command.close() }
             throw PtpLinkException("Handshake failed: ${e.message}", e)
@@ -66,6 +75,7 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
 
         val event = newSocket()
         event.connect(InetSocketAddress(host, port), connectTimeoutMs)
+        settleAfterConnect()
         // A few bodies answer the command channel but never bind the event channel.
         // Downloads still work in that case, so treat a failed event handshake as a
         // degraded mode instead of a fatal error.
@@ -107,6 +117,11 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         keepAlive = true
         soTimeout = 45_000
         runCatching { receiveBufferSize = 4 shl 20 }
+    }
+
+    /** Pause between the TCP handshake and the first PTP/IP packet (see [connect]). */
+    private fun settleAfterConnect() {
+        runCatching { Thread.sleep(POST_CONNECT_DELAY_MS) }
     }
 
     private class InitAck(val connectionNumber: Int)
