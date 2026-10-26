@@ -129,8 +129,8 @@ fun ConnectScreen(
             Button(
                 onClick = {
                     when {
+                        busy -> repo.cancelConnect()
                         connected -> repo.disconnect()
-                        busy -> Unit
                         mode == ConnectMode.STA -> repo.connect(mode = mode)
                         settings.lastSsid.isBlank() -> manualDialog = true
                         else -> repo.connect(mode = mode)
@@ -138,19 +138,19 @@ fun ConnectScreen(
                 },
                 modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(18.dp),
-                enabled = !busy,
+                enabled = true,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = NikonYellow,
-                    contentColor = Color(0xFF161200),
+                    containerColor = if (busy) NikonLinkTheme.colors.card else NikonYellow,
+                    contentColor = if (busy) Paper else Color(0xFF161200),
                     disabledContainerColor = NikonYellowDim,
                     disabledContentColor = PaperDim,
                 ),
             ) {
                 Text(
                     when {
+                        state is ConnState.Reconnecting -> "停止重连"
+                        state is ConnState.Connecting -> "取消连接"
                         connected -> "断开连接"
-                        state is ConnState.Connecting -> "正在连接…"
-                        state is ConnState.Reconnecting -> "等待重连…"
                         mode == ConnectMode.STA -> "扫描并连接"
                         else -> "连接相机"
                     },
@@ -600,6 +600,7 @@ private fun statusSubtitle(state: ConnState, mode: ConnectMode): String = when (
     }
     is ConnState.Connecting -> state.step
     is ConnState.Connected -> "相机会话已建立 · 可以浏览与下载了"
-    is ConnState.Reconnecting -> "第 ${state.attempt} 次重试，${state.waitSeconds} 秒后开始"
+    is ConnState.Reconnecting ->
+        "第 ${state.attempt} 次重试，${state.waitSeconds} 秒后开始 · 点上方按钮可停止"
     is ConnState.Error -> state.message
 }

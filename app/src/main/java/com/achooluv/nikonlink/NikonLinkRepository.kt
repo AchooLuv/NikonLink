@@ -126,6 +126,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val kindByHandle = HashMap<Int, com.achooluv.nikonlink.camera.FileKind>()
     private var loadedPages = 0
     private var connectJob: Job? = null
+    private var reconnectJob: Job? = null
     private var keepAliveJob: Job? = null
     private var downloadJob: Job? = null
     private var userDisconnected = false
@@ -153,6 +154,8 @@ class NikonLinkRepository private constructor(private val app: Application) {
         mode: ConnectMode = settings.mode.value,
     ) {
         connectJob?.cancel()
+        reconnectJob?.cancel()
+        reconnectJob = null
         userDisconnected = false
         settings.setMode(mode)
         connectJob = scope.launch {
@@ -192,6 +195,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 val candidates = candidateHosts(network)
                 val resolved = if (mode == ConnectMode.STA) {
                     host?.takeIf { it.isNotBlank() }
+                        ?: rememberedHost()
                         ?: scanLanForCamera()
                         ?: throw IOException(STA_NOT_FOUND)
                 } else {
@@ -280,9 +284,21 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
+    /** Last camera address, when it still answers — makes repeat STA connects instant. */
+    private fun rememberedHost(): String? =
+        settings.lastHost.takeIf {
+            it.isNotBlank() && CameraDiscovery.probe(it, Ptp.PORT, null, 900)
+        }
+
     /** Rescans the current LAN for a camera (Wi-Fi station mode). */
     private suspend fun scanLanForCamera(): String? {
-        val found = LanScanner.scan(Ptp.PORT) { done ->
+        val subnets = LanScanner.localSubnets(app)
+        Diagnostics.log("STA 扫描网段：${subnets.ifEmpty { listOf("未取到本机网段") }.joinToString()}")
+        val found = LanScanner.scan(
+            context = app,
+            port = Ptp.PORT,
+            extraHost = settings.lastHost,
+        ) { done ->
             _state.value = ConnState.Connecting("正在扫描局域网…（已检查 $done 个地址）")
         }
         Diagnostics.log("局域网扫描结果：${found.ifEmpty { listOf("未发现相机") }.joinToString()}")
@@ -309,6 +325,8 @@ class NikonLinkRepository private constructor(private val app: Application) {
     fun disconnect() {
         userDisconnected = true
         connectJob?.cancel()
+        reconnectJob?.cancel()
+        reconnectJob = null
         keepAliveJob?.cancel()
         ConnectionService.stop(app)
         suppressDisconnect = true
@@ -358,7 +376,31 @@ class NikonLinkRepository private constructor(private val app: Application) {
             return
         }
         if (_state.value is ConnState.Reconnecting) return
-        scope.launch { reconnectLoop(error) }
+        reconnectJob = scope.launch { reconnectLoop(error) }
+    }
+
+    /**
+     * User pressed "stop": abort an in-flight connect attempt or the auto-reconnect
+     * loop, and drop the link. The next manual connect starts from a clean slate.
+     */
+    fun cancelConnect() {
+        userDisconnected = true
+        connectJob?.cancel()
+        connectJob = null
+        reconnectJob?.cancel()
+        reconnectJob = null
+        keepAliveJob?.cancel()
+        keepAliveJob = null
+        suppressDisconnect = true
+        runCatching { client.close() }
+        suppressDisconnect = false
+        client.socketFactory = javax.net.SocketFactory.getDefault()
+        scope.launch {
+            runCatching { wifi.release() }
+            ConnectionService.stop(app)
+            _state.value = ConnState.Idle
+            Diagnostics.log("用户取消了连接/重连")
+        }
     }
 
     private suspend fun reconnectLoop(cause: Throwable) {

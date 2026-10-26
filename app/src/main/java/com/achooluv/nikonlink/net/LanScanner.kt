@@ -1,5 +1,9 @@
 package com.achooluv.nikonlink.net
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
@@ -13,24 +17,64 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 /**
- * Finds a camera that is already on the local network (Wi-Fi station mode):
- * the phone and the camera share a router, so we probe port 15740 across the
- * phone's own /24 subnets instead of joining a camera access point.
+ * Finds a camera that is already on the local network (Wi-Fi station mode).
+ *
+ * The subnet list comes from [LinkProperties] first (authoritative, works even
+ * when interface enumeration is restricted), with [NetworkInterface] as a
+ * fallback; a saved camera IP contributes its own /24 as well.
  */
 object LanScanner {
 
-    /** Hosts per subnet are probed with this many sockets in flight. */
-    private const val CONCURRENCY = 48
+    private const val CONCURRENCY = 64
+
+    fun localSubnets(context: Context, network: Network? = null): List<String> {
+        val prefixes = LinkedHashSet<String>()
+
+        runCatching {
+            val cm = context.getSystemService(ConnectivityManager::class.java)
+            val target = network ?: cm?.activeNetwork
+            val props: LinkProperties? = cm?.getLinkProperties(target)
+            props?.linkAddresses?.forEach { link ->
+                val ip = link.address as? Inet4Address ?: return@forEach
+                if (ip.isLoopbackAddress || ip.isLinkLocalAddress) return@forEach
+                prefixes += prefixOf(ip)
+            }
+        }
+
+        if (prefixes.isEmpty()) {
+            runCatching {
+                NetworkInterface.getNetworkInterfaces().toList().forEach { iface ->
+                    if (!iface.isUp || iface.isLoopback) return@forEach
+                    iface.inetAddresses.toList().forEach { address ->
+                        val ip = address as? Inet4Address ?: return@forEach
+                        if (ip.isLoopbackAddress || ip.isLinkLocalAddress) return@forEach
+                        prefixes += prefixOf(ip)
+                    }
+                }
+            }
+        }
+        return prefixes.toList()
+    }
+
+    private fun prefixOf(ip: Inet4Address): String {
+        val b = ip.address
+        return "${b[0].toInt() and 0xFF}.${b[1].toInt() and 0xFF}.${b[2].toInt() and 0xFF}."
+    }
 
     suspend fun scan(
+        context: Context,
         port: Int = 15740,
-        timeoutMs: Int = 320,
+        timeoutMs: Int = 650,
+        extraHost: String? = null,
         onProgress: ((Int) -> Unit)? = null,
     ): List<String> = withContext(Dispatchers.IO) {
-        val subnets = localSubnets()
-        if (subnets.isEmpty()) return@withContext emptyList()
+        val prefixes = LinkedHashSet(localSubnets(context))
+        extraHost?.trim()?.takeIf { it.count { ch -> ch == '.' } == 3 }?.let { host ->
+            prefixes += host.substringBeforeLast('.') + "."
+        }
+        if (prefixes.isEmpty()) return@withContext emptyList()
 
-        val hosts = subnets.flatMap { prefix -> (1..254).map { "$prefix$it" } }
+        val hosts = prefixes.flatMap { prefix -> (1..254).map { "$prefix$it" } }.distinct()
         val gate = Semaphore(CONCURRENCY)
         var done = 0
 
@@ -46,23 +90,6 @@ object LanScanner {
                 }
             }.awaitAll().filterNotNull()
         }.sortedBy { it.substringAfterLast('.').toIntOrNull() ?: 0 }
-    }
-
-    /** "192.168.1." prefixes for every site-local IPv4 interface. */
-    private fun localSubnets(): List<String> {
-        val result = LinkedHashSet<String>()
-        runCatching {
-            NetworkInterface.getNetworkInterfaces().toList().forEach { iface ->
-                if (!iface.isUp || iface.isLoopback) return@forEach
-                iface.inetAddresses.toList().forEach { address ->
-                    val ip = address as? Inet4Address ?: return@forEach
-                    if (ip.isLoopbackAddress || ip.isLinkLocalAddress) return@forEach
-                    val bytes = ip.address
-                    result += "${bytes[0].toInt() and 0xFF}.${bytes[1].toInt() and 0xFF}.${bytes[2].toInt() and 0xFF}."
-                }
-            }
-        }
-        return result.toList()
     }
 
     private fun reachable(host: String, port: Int, timeoutMs: Int): Boolean {

@@ -24,14 +24,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.achooluv.nikonlink.data.ConnectMode
 
 data class TutorialStep(
@@ -182,8 +180,9 @@ val tutorialSectionsSta = listOf(
 )
 
 @Composable
-fun TutorialScreen(onDismiss: () -> Unit) {
-    var mode by remember { mutableStateOf(ConnectMode.AP) }
+fun TutorialScreen(repo: com.achooluv.nikonlink.NikonLinkRepository, onDismiss: () -> Unit) {
+    val settings = repo.settings
+    val mode by settings.mode.collectAsStateWithLifecycle()
     val sections = if (mode == ConnectMode.AP) tutorialSectionsAp else tutorialSectionsSta
 
     Surface(Modifier.fillMaxSize(), color = Ink) {
@@ -214,7 +213,7 @@ fun TutorialScreen(onDismiss: () -> Unit) {
             Spacer(Modifier.height(10.dp))
             ModeSelectorRow(
                 mode = mode,
-                onChange = { mode = it },
+                onChange = { settings.setMode(it) },
                 modifier = Modifier.padding(horizontal = 20.dp),
             )
 
@@ -303,7 +302,3 @@ private fun TutorialRow(step: TutorialStep) {
         }
     }
 }
-
-/** Kept for callers that still reference the old bottom-sheet name. */
-@Composable
-fun TutorialSheet(onDismiss: () -> Unit) = TutorialScreen(onDismiss)

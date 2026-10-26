@@ -8,8 +8,8 @@ package com.achooluv.nikonlink.data
  *         phone reaches it over the LAN; the phone keeps its normal internet.
  */
 enum class ConnectMode(val key: String, val label: String, val shortLabel: String) {
-    AP(key = "ap", label = "相机热点（AP）", shortLabel = "相机热点"),
-    STA(key = "sta", label = "同一 Wi-Fi（STA）", shortLabel = "同一 Wi-Fi");
+    AP(key = "ap", label = "相机热点", shortLabel = "相机热点"),
+    STA(key = "sta", label = "同一 Wi-Fi", shortLabel = "同一 Wi-Fi");
 
     companion object {
         fun from(value: String?): ConnectMode =

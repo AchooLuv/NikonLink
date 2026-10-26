@@ -101,7 +101,7 @@ fun AppRoot(repo: NikonLinkRepository) {
 
         // Full-screen overlay: the tutorial owns its own header/insets.
         if (showTutorial) {
-            TutorialScreen(onDismiss = { showTutorial = false })
+            TutorialScreen(repo = repo, onDismiss = { showTutorial = false })
         }
     }
 }
