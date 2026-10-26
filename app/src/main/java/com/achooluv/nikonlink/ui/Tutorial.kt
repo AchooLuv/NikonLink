@@ -24,12 +24,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.achooluv.nikonlink.data.ConnectMode
 
 data class TutorialStep(
@@ -180,9 +182,10 @@ val tutorialSectionsSta = listOf(
 )
 
 @Composable
-fun TutorialScreen(repo: com.achooluv.nikonlink.NikonLinkRepository, onDismiss: () -> Unit) {
-    val settings = repo.settings
-    val mode by settings.mode.collectAsStateWithLifecycle()
+fun TutorialScreen(initialMode: ConnectMode, onDismiss: () -> Unit) {
+    // The tutorial is documentation: it opens on the connect page's mode, but
+    // switching tabs here must not change the app's connection mode.
+    var mode by remember(initialMode) { mutableStateOf(initialMode) }
     val sections = if (mode == ConnectMode.AP) tutorialSectionsAp else tutorialSectionsSta
 
     Surface(Modifier.fillMaxSize(), color = Ink) {
@@ -213,7 +216,7 @@ fun TutorialScreen(repo: com.achooluv.nikonlink.NikonLinkRepository, onDismiss: 
             Spacer(Modifier.height(10.dp))
             ModeSelectorRow(
                 mode = mode,
-                onChange = { settings.setMode(it) },
+                onChange = { mode = it },
                 modifier = Modifier.padding(horizontal = 20.dp),
             )
 

@@ -43,6 +43,7 @@ fun AppRoot(repo: NikonLinkRepository) {
     // Keep the screen awake while bytes are moving; release it as soon as the
     // batch ends so the phone can sleep again.
     val progress by repo.progress.collectAsStateWithLifecycle()
+    val connectMode by repo.settings.mode.collectAsStateWithLifecycle()
     val activity = LocalContext.current as? Activity
     LaunchedEffect(progress.active) {
         val window = activity?.window ?: return@LaunchedEffect
@@ -99,9 +100,13 @@ fun AppRoot(repo: NikonLinkRepository) {
             }
         }
 
-        // Full-screen overlay: the tutorial owns its own header/insets.
+        // Full-screen overlay: the tutorial owns its own header/insets. It opens
+        // on the current connection mode but its own switch is documentation-only.
         if (showTutorial) {
-            TutorialScreen(repo = repo, onDismiss = { showTutorial = false })
+            TutorialScreen(
+                initialMode = connectMode,
+                onDismiss = { showTutorial = false },
+            )
         }
     }
 }

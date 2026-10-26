@@ -198,7 +198,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                     host?.takeIf { it.isNotBlank() }
                         ?: rememberedHost()
                         ?: scanLanForCamera()
-                        ?: throw IOException(staNotFound())
+                        ?: throw IOException(STA_NOT_FOUND)
                 } else {
                     host?.takeIf { it.isNotBlank() }
                         ?: candidates.firstOrNull { CameraDiscovery.probe(it, Ptp.PORT, network, 1200) }
@@ -305,12 +305,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
         Diagnostics.log("局域网扫描结果：${found.ifEmpty { listOf("未发现相机") }.joinToString()}")
         return found.firstOrNull()
-    }
-
-    /** Failure text that tells the user exactly which subnets were probed. */
-    private fun staNotFound(): String {
-        val scanned = lastScanSubnets.joinToString("、") { "${it}0/24" }
-        return if (scanned.isBlank()) STA_NOT_FOUND else "$STA_NOT_FOUND（已扫描 $scanned）"
     }
 
     /** Aggregates free/total bytes across every card the body exposes. */
