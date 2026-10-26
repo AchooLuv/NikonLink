@@ -2,6 +2,13 @@ package com.achooluv.nikonlink.ui
 
 import android.app.Activity
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
@@ -39,6 +46,10 @@ private data class Tab(val label: String, val icon: @Composable () -> Unit)
 fun AppRoot(repo: NikonLinkRepository) {
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
     var showTutorial by rememberSaveable { mutableStateOf(false) }
+
+    // Back / gesture navigation closes the tutorial first; only a second back
+    // leaves the app.
+    BackHandler(enabled = showTutorial) { showTutorial = false }
 
     // Keep the screen awake while bytes are moving; release it as soon as the
     // batch ends so the phone can sleep again.
@@ -102,7 +113,11 @@ fun AppRoot(repo: NikonLinkRepository) {
 
         // Full-screen overlay: the tutorial owns its own header/insets. It opens
         // on the current connection mode but its own switch is documentation-only.
-        if (showTutorial) {
+        AnimatedVisibility(
+            visible = showTutorial,
+            enter = fadeIn(tween(220)) + slideInVertically(tween(260)) { height -> height / 14 },
+            exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { height -> height / 14 },
+        ) {
             TutorialScreen(
                 initialMode = connectMode,
                 onDismiss = { showTutorial = false },
