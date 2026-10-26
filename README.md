@@ -70,6 +70,10 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 3. **手机**：连同一个路由器 Wi-Fi（不用连相机热点，手机仍可上网）
 4. **App**：模式切到「同一 Wi-Fi」→ 点「扫描并连接」；找不到就用「手动 IP」填相机在局域网里的地址
 
+<p align="center">
+  <img src="docs/screenshot-sta.png" width="240" alt="STA 模式">
+</p>
+
 > 同一时间只能有一个客户端连相机：请先完全退出 SnapBridge。
 
 ## 机型支持
