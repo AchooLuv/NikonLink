@@ -4,10 +4,12 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
+import android.net.NetworkCapabilities
 import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
+import javax.net.SocketFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -19,28 +21,34 @@ import kotlinx.coroutines.withContext
 /**
  * Finds a camera that is already on the local network (Wi-Fi station mode).
  *
- * The subnet list comes from [LinkProperties] first (authoritative, works even
- * when interface enumeration is restricted), with [NetworkInterface] as a
- * fallback; a saved camera IP contributes its own /24 as well.
+ * Subnets come from the [LinkProperties] of every Wi-Fi network (falling back to
+ * interface enumeration), and probes are bound to that Wi-Fi network so the
+ * system cannot route them over cellular.
  */
 object LanScanner {
 
     private const val CONCURRENCY = 64
 
-    fun localSubnets(context: Context, network: Network? = null): List<String> {
-        val prefixes = LinkedHashSet<String>()
-
-        runCatching {
-            val cm = context.getSystemService(ConnectivityManager::class.java)
-            val target = network ?: cm?.activeNetwork
-            val props: LinkProperties? = cm?.getLinkProperties(target)
-            props?.linkAddresses?.forEach { link ->
-                val ip = link.address as? Inet4Address ?: return@forEach
-                if (ip.isLoopbackAddress || ip.isLinkLocalAddress) return@forEach
-                prefixes += prefixOf(ip)
+    private fun wifiNetworks(context: Context): List<Network> {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
+        return runCatching {
+            cm.allNetworks.filter { network ->
+                cm.getNetworkCapabilities(network)
+                    ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
             }
-        }
+        }.getOrDefault(emptyList())
+    }
 
+    fun localSubnets(context: Context): List<String> {
+        val prefixes = LinkedHashSet<String>()
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+
+        wifiNetworks(context).forEach { network ->
+            runCatching { cm?.getLinkProperties(network) }.getOrNull()?.let { collectPrefixes(it, prefixes) }
+        }
+        if (prefixes.isEmpty()) {
+            runCatching { cm?.getLinkProperties(cm.activeNetwork) }.getOrNull()?.let { collectPrefixes(it, prefixes) }
+        }
         if (prefixes.isEmpty()) {
             runCatching {
                 NetworkInterface.getNetworkInterfaces().toList().forEach { iface ->
@@ -54,6 +62,14 @@ object LanScanner {
             }
         }
         return prefixes.toList()
+    }
+
+    private fun collectPrefixes(props: LinkProperties, into: MutableSet<String>) {
+        props.linkAddresses.forEach { link ->
+            val ip = link.address as? Inet4Address ?: return@forEach
+            if (ip.isLoopbackAddress || ip.isLinkLocalAddress) return@forEach
+            into += prefixOf(ip)
+        }
     }
 
     private fun prefixOf(ip: Inet4Address): String {
@@ -74,6 +90,10 @@ object LanScanner {
         }
         if (prefixes.isEmpty()) return@withContext emptyList()
 
+        val factory: SocketFactory? = wifiNetworks(context)
+            .firstOrNull()
+            ?.let { network -> runCatching { network.socketFactory }.getOrNull() }
+
         val hosts = prefixes.flatMap { prefix -> (1..254).map { "$prefix$it" } }.distinct()
         val gate = Semaphore(CONCURRENCY)
         var done = 0
@@ -81,7 +101,7 @@ object LanScanner {
         coroutineScope {
             hosts.map { host ->
                 async {
-                    val open = gate.withPermit { reachable(host, port, timeoutMs) }
+                    val open = gate.withPermit { reachable(host, port, timeoutMs, factory) }
                     synchronized(this@coroutineScope) {
                         done++
                         if (done % 32 == 0) onProgress?.invoke(done)
@@ -92,8 +112,8 @@ object LanScanner {
         }.sortedBy { it.substringAfterLast('.').toIntOrNull() ?: 0 }
     }
 
-    private fun reachable(host: String, port: Int, timeoutMs: Int): Boolean {
-        val socket = Socket()
+    private fun reachable(host: String, port: Int, timeoutMs: Int, factory: SocketFactory?): Boolean {
+        val socket: Socket = runCatching { factory?.createSocket() ?: Socket() }.getOrNull() ?: return false
         return try {
             socket.connect(InetSocketAddress(host, port), timeoutMs)
             true

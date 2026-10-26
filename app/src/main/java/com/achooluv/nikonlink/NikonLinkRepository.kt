@@ -131,6 +131,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private var downloadJob: Job? = null
     private var userDisconnected = false
     private var currentHost: String = ""
+    private var lastScanSubnets: List<String> = emptyList()
 
     /** Set while we deliberately close a link, so the disconnect hook stays quiet. */
     @Volatile
@@ -197,7 +198,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                     host?.takeIf { it.isNotBlank() }
                         ?: rememberedHost()
                         ?: scanLanForCamera()
-                        ?: throw IOException(STA_NOT_FOUND)
+                        ?: throw IOException(staNotFound())
                 } else {
                     host?.takeIf { it.isNotBlank() }
                         ?: candidates.firstOrNull { CameraDiscovery.probe(it, Ptp.PORT, network, 1200) }
@@ -293,6 +294,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
     /** Rescans the current LAN for a camera (Wi-Fi station mode). */
     private suspend fun scanLanForCamera(): String? {
         val subnets = LanScanner.localSubnets(app)
+        lastScanSubnets = subnets
         Diagnostics.log("STA 扫描网段：${subnets.ifEmpty { listOf("未取到本机网段") }.joinToString()}")
         val found = LanScanner.scan(
             context = app,
@@ -303,6 +305,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
         Diagnostics.log("局域网扫描结果：${found.ifEmpty { listOf("未发现相机") }.joinToString()}")
         return found.firstOrNull()
+    }
+
+    /** Failure text that tells the user exactly which subnets were probed. */
+    private fun staNotFound(): String {
+        val scanned = lastScanSubnets.joinToString("、") { "${it}0/24" }
+        return if (scanned.isBlank()) STA_NOT_FOUND else "$STA_NOT_FOUND（已扫描 $scanned）"
     }
 
     /** Aggregates free/total bytes across every card the body exposes. */
