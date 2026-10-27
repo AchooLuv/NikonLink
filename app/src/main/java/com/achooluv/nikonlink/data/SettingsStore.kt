@@ -23,6 +23,10 @@ class SettingsStore(context: Context) {
     }
     private var pendingImportWrites = 0
 
+    init {
+        migrateLegacyHost()
+    }
+
     val autoPull = MutableStateFlow(prefs.getBoolean(KEY_AUTO_PULL, false))
     val keepAlive = MutableStateFlow(prefs.getBoolean(KEY_KEEP_ALIVE, true))
     val showRawThumbnails = MutableStateFlow(prefs.getBoolean(KEY_RAW_THUMBS, true))
@@ -53,6 +57,36 @@ class SettingsStore(context: Context) {
     var lastHost: String
         get() = prefs.getString(KEY_HOST, "") ?: ""
         set(value) = prefs.edit().putString(KEY_HOST, value).apply()
+
+    /**
+     * Camera address per connection mode: the AP body answers on 192.168.1.1 while
+     * the same body on a router gets a DHCP lease (e.g. 192.168.1.70), so the two
+     * must never share one value.
+     */
+    fun hostFor(mode: ConnectMode): String = prefs.getString(hostKey(mode), "") ?: ""
+
+    fun setHost(mode: ConnectMode, value: String) {
+        prefs.edit().putString(hostKey(mode), value).apply()
+        // Kept for older builds / diagnostics; nothing reads it for connection setup.
+        lastHost = value
+    }
+
+    private fun hostKey(mode: ConnectMode): String = when (mode) {
+        ConnectMode.AP -> KEY_HOST_AP
+        ConnectMode.STA -> KEY_HOST_STA
+    }
+
+    /**
+     * One-time migration: builds before 0.1.22 kept a single [lastHost]. It is only
+     * meaningful for the STA case (the AP address is fixed), so seed STA and let AP
+     * fall back to its standard 192.168.1.1 candidate.
+     */
+    private fun migrateLegacyHost() {
+        val legacy = prefs.getString(KEY_HOST, "") ?: ""
+        if (legacy.isBlank()) return
+        if (prefs.contains(KEY_HOST_AP) || prefs.contains(KEY_HOST_STA)) return
+        prefs.edit().putString(KEY_HOST_STA, legacy).apply()
+    }
 
     /**
      * Highest object handle that existed when auto-pull was switched on. Objects
@@ -148,6 +182,8 @@ class SettingsStore(context: Context) {
         private const val KEY_SSID = "last_ssid"
         private const val KEY_PASS = "last_pass"
         private const val KEY_HOST = "last_host"
+        private const val KEY_HOST_AP = "last_host_ap"
+        private const val KEY_HOST_STA = "last_host_sta"
         private const val KEY_BASELINE = "auto_pull_baseline"
         private const val KEY_DONE = "done"
         private const val KEY_MODE = "connect_mode"

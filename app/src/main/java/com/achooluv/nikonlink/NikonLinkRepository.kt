@@ -247,7 +247,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                         settings.lastPassphrase = passphrase ?: settings.lastPassphrase
                     }
                 }
-                settings.lastHost = resolved
+                settings.setHost(mode, resolved)
 
                 _state.value = ConnState.Connected(info.model.ifBlank { "Nikon 相机" })
                 ConnectionService.start(app, "已连接 ${info.model.ifBlank { "Nikon 相机" }} · 可传输")
@@ -283,9 +283,9 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
-    /** Last camera address, when it still answers — makes repeat STA connects instant. */
+    /** Last camera address for STA, when it still answers — makes repeat connects instant. */
     private fun rememberedHost(): String? =
-        settings.lastHost.takeIf {
+        settings.hostFor(ConnectMode.STA).takeIf {
             it.isNotBlank() && CameraDiscovery.probe(it, Ptp.PORT, null, 900)
         }
 
@@ -296,9 +296,13 @@ class NikonLinkRepository private constructor(private val app: Application) {
         val found = LanScanner.scan(
             context = app,
             port = Ptp.PORT,
-            extraHost = settings.lastHost,
+            extraHost = settings.hostFor(ConnectMode.STA),
         ) { done ->
-            _state.value = ConnState.Connecting("正在扫描局域网…（已检查 $done 个地址）")
+            // The scanner reports from IO threads: once the user cancels, the job is
+            // no longer active and stale "正在连接" updates must not come back.
+            if (connectJob?.isActive == true) {
+                _state.value = ConnState.Connecting("正在扫描局域网…（已检查 $done 个地址）")
+            }
         }
         Diagnostics.log("局域网扫描结果：${found.ifEmpty { listOf("未发现相机") }.joinToString()}")
         return found.firstOrNull()
@@ -327,7 +331,18 @@ class NikonLinkRepository private constructor(private val app: Application) {
         reconnectJob?.cancel()
         reconnectJob = null
         keepAliveJob?.cancel()
+        downloadJob?.cancel()
         ConnectionService.stop(app)
+        // Flip the UI immediately; the PTP CloseSession below is a network round trip.
+        _state.value = ConnState.Idle
+        _identity.value = null
+        _files.value = emptyList()
+        allHandles = emptyList()
+        kindByHandle.clear()
+        thumbnailCache.evictAll()
+        extrasLoaded = false
+        _extras.value = null
+        _progress.value = _progress.value.copy(active = false)
         // Closing the session is a PTP round trip: keep it off the UI thread.
         scope.launch {
             suppressDisconnect = true
@@ -335,14 +350,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
             suppressDisconnect = false
             client.socketFactory = javax.net.SocketFactory.getDefault()
             runCatching { wifi.release() }
-            _state.value = ConnState.Idle
-            _identity.value = null
-            _files.value = emptyList()
-            allHandles = emptyList()
-            kindByHandle.clear()
-            thumbnailCache.evictAll()
-            extrasLoaded = false
-            _extras.value = null
         }
     }
 
@@ -391,6 +398,9 @@ class NikonLinkRepository private constructor(private val app: Application) {
         reconnectJob = null
         keepAliveJob?.cancel()
         keepAliveJob = null
+        // Leave the busy state right away: scanner callbacks are silenced by the
+        // cancelled job, and the socket teardown below runs in the background.
+        _state.value = ConnState.Idle
         scope.launch {
             suppressDisconnect = true
             runCatching { client.close() }
@@ -398,7 +408,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
             client.socketFactory = javax.net.SocketFactory.getDefault()
             runCatching { wifi.release() }
             ConnectionService.stop(app)
-            _state.value = ConnState.Idle
             Diagnostics.log("用户取消了连接/重连")
         }
     }
@@ -422,7 +431,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 client.socketFactory = network?.socketFactory ?: javax.net.SocketFactory.getDefault()
 
                 val host = if (mode == ConnectMode.STA) {
-                    settings.lastHost.takeIf {
+                    settings.hostFor(ConnectMode.STA).takeIf {
                         it.isNotBlank() && CameraDiscovery.probe(it, Ptp.PORT, null, 800)
                     } ?: scanLanForCamera() ?: currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST }
                 } else {
@@ -749,7 +758,9 @@ class NikonLinkRepository private constructor(private val app: Application) {
 
     private fun candidateHosts(network: Network?): List<String> {
         val out = LinkedHashSet<String>()
-        settings.lastHost.takeIf { it.isNotBlank() }?.let(out::add)
+        // AP hosts only: the STA lease belongs to a different network and would just
+        // waste a probe round trip here.
+        settings.hostFor(ConnectMode.AP).takeIf { it.isNotBlank() }?.let(out::add)
         runCatching {
             val cm = app.getSystemService(android.net.ConnectivityManager::class.java)
             val active = network ?: cm?.activeNetwork

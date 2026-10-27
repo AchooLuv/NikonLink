@@ -120,9 +120,24 @@ fun ConnectScreen(
         Spacer(Modifier.height(18.dp))
         ModeSelectorRow(
             mode = mode,
-            onChange = { settings.setMode(it) },
+            onChange = {
+                settings.setMode(it)
+                // Drop a stale error from the previous mode so the page starts clean.
+                if (state is ConnState.Error) repo.cancelConnect()
+            },
+            enabled = !connected && !busy,
             modifier = Modifier.padding(horizontal = 20.dp),
         )
+        if (connected || busy) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "断开连接后可切换模式",
+                modifier = Modifier.fillMaxWidth(),
+                color = NikonLinkTheme.colors.dim,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+            )
+        }
 
         Spacer(Modifier.height(22.dp))
         Column(Modifier.padding(horizontal = 20.dp)) {
@@ -333,7 +348,9 @@ fun ConnectScreen(
             mode = mode,
             initialSsid = settings.lastSsid,
             initialPass = settings.lastPassphrase,
-            initialHost = settings.lastHost.ifBlank { "192.168.1.1" },
+            initialHost = settings.hostFor(mode).ifBlank {
+                if (mode == ConnectMode.STA) "" else "192.168.1.1"
+            },
             onDismiss = { manualDialog = false },
             onConnect = { ssid, pass, host ->
                 manualDialog = false

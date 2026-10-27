@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -171,11 +172,13 @@ fun ModeSelectorRow(
     mode: com.achooluv.nikonlink.data.ConnectMode,
     onChange: (com.achooluv.nikonlink.data.ConnectMode) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier
             .fillMaxWidth()
             .background(InkRaised, RoundedCornerShape(14.dp))
+            .alpha(if (enabled) 1f else 0.45f)
             .padding(4.dp),
     ) {
         com.achooluv.nikonlink.data.ConnectMode.entries.forEach { option ->
@@ -186,7 +189,7 @@ fun ModeSelectorRow(
                     .height(36.dp)
                     .clip(RoundedCornerShape(11.dp))
                     .background(if (selected) NikonYellow else Color.Transparent)
-                    .clickable { onChange(option) },
+                    .clickable(enabled = enabled) { onChange(option) },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
