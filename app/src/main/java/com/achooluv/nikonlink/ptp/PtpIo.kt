@@ -67,9 +67,15 @@ class LeInput(private val input: InputStream) {
     /**
      * Streams exactly [length] bytes into [out] through a fixed buffer, reporting
      * cumulative progress. Heap usage stays at one buffer regardless of file size.
+     * Callers transferring many chunks can pass a reusable [buffer] to avoid
+     * allocating 256 KiB per chunk.
      */
-    fun copyTo(out: java.io.OutputStream, length: Int, onProgress: ((Long) -> Unit)? = null): Long {
-        val buffer = ByteArray(256 * 1024)
+    fun copyTo(
+        out: java.io.OutputStream,
+        length: Int,
+        buffer: ByteArray = ByteArray(256 * 1024),
+        onProgress: ((Long) -> Unit)? = null,
+    ): Long {
         var left = length
         var total = 0L
         while (left > 0) {

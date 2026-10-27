@@ -20,6 +20,8 @@ import com.achooluv.nikonlink.R
  */
 class ConnectionService : Service() {
 
+    private var foregroundStarted = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -29,7 +31,15 @@ class ConnectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val text = intent?.getStringExtra(EXTRA_TEXT) ?: "相机已连接"
-        startForeground(NOTIFICATION_ID, buildNotification(text))
+        val notification = buildNotification(text)
+        // Only the first call promotes the service; later updates just refresh the
+        // notification instead of going through startForeground() again.
+        if (!foregroundStarted) {
+            startForeground(NOTIFICATION_ID, notification)
+            foregroundStarted = true
+        } else {
+            getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, notification)
+        }
         return START_STICKY
     }
 

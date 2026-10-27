@@ -12,6 +12,17 @@ class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("nikonlink.settings", Context.MODE_PRIVATE)
     private val imports = context.getSharedPreferences("nikonlink.imports", Context.MODE_PRIVATE)
 
+    /**
+     * Import records are read on every grid cell, so they live in memory and are
+     * written back in batches instead of re-reading (and copying) the preference
+     * set per call.
+     */
+    private val importLock = Any()
+    private val importedKeys = HashSet<String>().apply {
+        addAll(imports.getStringSet(KEY_DONE, emptySet()) ?: emptySet())
+    }
+    private var pendingImportWrites = 0
+
     val autoPull = MutableStateFlow(prefs.getBoolean(KEY_AUTO_PULL, false))
     val keepAlive = MutableStateFlow(prefs.getBoolean(KEY_KEEP_ALIVE, true))
     val showRawThumbnails = MutableStateFlow(prefs.getBoolean(KEY_RAW_THUMBS, true))
@@ -80,24 +91,44 @@ class SettingsStore(context: Context) {
     fun importKey(handle: Int, size: Long): String = "$handle:$size"
 
     fun isImported(handle: Int, size: Long): Boolean =
-        imports.getStringSet(KEY_DONE, emptySet())?.contains(importKey(handle, size)) == true
+        synchronized(importLock) { importKey(handle, size) in importedKeys }
 
     fun markImported(handle: Int, size: Long) {
-        val current = imports.getStringSet(KEY_DONE, emptySet())?.toMutableSet() ?: mutableSetOf()
-        current += importKey(handle, size)
-        if (current.size > 5000) {
-            // Keep the newest entries only; the set is a convenience index, not a ledger.
-            val trimmed = current.toList().takeLast(4000).toSet()
-            imports.edit().putStringSet(KEY_DONE, trimmed).apply()
-        } else {
-            imports.edit().putStringSet(KEY_DONE, current).apply()
+        var snapshot: Set<String>? = null
+        synchronized(importLock) {
+            importedKeys += importKey(handle, size)
+            if (importedKeys.size > 5000) {
+                // Keep the newest entries only; the set is a convenience index, not a ledger.
+                val trimmed = importedKeys.toList().takeLast(4000).toSet()
+                importedKeys.clear()
+                importedKeys.addAll(trimmed)
+            }
+            pendingImportWrites++
+            if (pendingImportWrites >= IMPORTS_WRITE_BATCH) {
+                pendingImportWrites = 0
+                snapshot = importedKeys.toSet()
+            }
         }
+        snapshot?.let { imports.edit().putStringSet(KEY_DONE, it).apply() }
+    }
+
+    /** Flushes buffered import records (call once a transfer batch finishes). */
+    fun flushImports() {
+        val snapshot = synchronized(importLock) {
+            pendingImportWrites = 0
+            importedKeys.toSet()
+        }
+        imports.edit().putStringSet(KEY_DONE, snapshot).apply()
     }
 
     /** Drops every stored preference and import record (the "reset" button). */
     fun clearAll() {
         prefs.edit().clear().apply()
         imports.edit().clear().apply()
+        synchronized(importLock) {
+            importedKeys.clear()
+            pendingImportWrites = 0
+        }
         autoPull.value = false
         keepAlive.value = true
         showRawThumbnails.value = true
@@ -122,6 +153,7 @@ class SettingsStore(context: Context) {
         private const val KEY_MODE = "connect_mode"
 
         const val DEFAULT_CHUNK = 4 * 1024 * 1024
+        private const val IMPORTS_WRITE_BATCH = 20
 
         val CHUNK_CHOICES = listOf(
             1 * 1024 * 1024,

@@ -56,7 +56,7 @@ class PtpClientLoopbackTest {
                 val objectInfo = client.objectInfo(1)
                 assertEquals("DSC_0001.JPG", objectInfo.filename)
                 assertEquals(300_000L, objectInfo.compressedSize)
-                assertTrue(objectInfo.isJpeg)
+                assertTrue(objectInfo.format == com.achooluv.nikonlink.ptp.Ptp.FORMAT_JPEG)
 
                 val thumb = client.thumbnail(1)
                 assertEquals(200, thumb.size)

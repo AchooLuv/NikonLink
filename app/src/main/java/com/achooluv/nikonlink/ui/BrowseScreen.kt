@@ -43,7 +43,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -83,26 +83,28 @@ private enum class LibraryFilter(val label: String) {
  * cannot balloon into hundreds of megabytes of bitmaps.
  */
 private class ThumbStore(private val maxBytes: Long = 32L * 1024 * 1024) {
-    val entries = mutableStateMapOf<Int, Bitmap?>()
+    /**
+     * One snapshot state per handle: a freshly decoded bitmap only invalidates the
+     * cell that owns it, instead of every visible cell (a single SnapshotStateMap
+     * would invalidate all readers on each put).
+     */
+    private val states = HashMap<Int, MutableState<Bitmap?>>()
     private val order = LinkedHashMap<Int, Long>(32, 0.75f, true)
     private var used = 0L
 
-    operator fun get(handle: Int): Bitmap? = entries[handle]
+    fun state(handle: Int): MutableState<Bitmap?> =
+        states.getOrPut(handle) { mutableStateOf(null) }
 
     fun put(handle: Int, bitmap: Bitmap) {
         val size = bitmap.byteCount.toLong()
-        if (size > maxBytes) {
-            entries[handle] = null
-            return
-        }
         used += size - (order[handle] ?: 0L)
         order[handle] = size
-        entries[handle] = bitmap
+        state(handle).value = bitmap
         trim()
     }
 
     fun markEmpty(handle: Int) {
-        entries[handle] = null
+        state(handle).value = null
         order.remove(handle)?.let { used -= it }
     }
 
@@ -111,7 +113,7 @@ private class ThumbStore(private val maxBytes: Long = 32L * 1024 * 1024) {
         while (used > maxBytes && order.size > 1 && iterator.hasNext()) {
             val oldest = iterator.next()
             used -= oldest.value
-            entries.remove(oldest.key)
+            states[oldest.key]?.value = null
             iterator.remove()
         }
     }
@@ -311,7 +313,7 @@ private fun ThumbCell(
     load: suspend () -> ByteArray?,
     onClick: () -> Unit,
 ) {
-    val bitmap = store[file.handle]
+    val bitmap = store.state(file.handle).value
 
     // Re-runs when the entry was never attempted (null + no record) or when it was
     // evicted from the bounded cache; failures are recorded so they do not loop.

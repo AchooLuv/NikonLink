@@ -9,6 +9,7 @@ import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.SocketFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -28,7 +29,9 @@ import kotlinx.coroutines.withContext
 object LanScanner {
 
     private const val CONCURRENCY = 64
+    private const val PROGRESS_EVERY = 32
 
+    @Suppress("DEPRECATION") // allNetworks is still the only way to see both Wi-Fi links
     private fun wifiNetworks(context: Context): List<Network> {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
         return runCatching {
@@ -40,24 +43,32 @@ object LanScanner {
     }
 
     fun localSubnets(context: Context): List<String> {
-        val prefixes = LinkedHashSet<String>()
-        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val fromNetworks = subnetsOf(context, wifiNetworks(context))
+        return fromNetworks.ifEmpty { interfaceSubnets() }
+    }
 
-        wifiNetworks(context).forEach { network ->
-            runCatching { cm?.getLinkProperties(network) }.getOrNull()?.let { collectPrefixes(it, prefixes) }
+    private fun subnetsOf(context: Context, networks: List<Network>): List<String> {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
+        val prefixes = LinkedHashSet<String>()
+        networks.forEach { network ->
+            runCatching { cm.getLinkProperties(network) }.getOrNull()?.let { collectPrefixes(it, prefixes) }
         }
         if (prefixes.isEmpty()) {
-            runCatching { cm?.getLinkProperties(cm.activeNetwork) }.getOrNull()?.let { collectPrefixes(it, prefixes) }
+            runCatching { cm.getLinkProperties(cm.activeNetwork) }.getOrNull()
+                ?.let { collectPrefixes(it, prefixes) }
         }
-        if (prefixes.isEmpty()) {
-            runCatching {
-                NetworkInterface.getNetworkInterfaces().toList().forEach { iface ->
-                    if (!iface.isUp || iface.isLoopback) return@forEach
-                    iface.inetAddresses.toList().forEach { address ->
-                        val ip = address as? Inet4Address ?: return@forEach
-                        if (ip.isLoopbackAddress || ip.isLinkLocalAddress) return@forEach
-                        prefixes += prefixOf(ip)
-                    }
+        return prefixes.toList()
+    }
+
+    private fun interfaceSubnets(): List<String> {
+        val prefixes = LinkedHashSet<String>()
+        runCatching {
+            NetworkInterface.getNetworkInterfaces().toList().forEach { iface ->
+                if (!iface.isUp || iface.isLoopback) return@forEach
+                iface.inetAddresses.toList().forEach { address ->
+                    val ip = address as? Inet4Address ?: return@forEach
+                    if (ip.isLoopbackAddress || ip.isLinkLocalAddress) return@forEach
+                    prefixes += prefixOf(ip)
                 }
             }
         }
@@ -84,28 +95,27 @@ object LanScanner {
         extraHost: String? = null,
         onProgress: ((Int) -> Unit)? = null,
     ): List<String> = withContext(Dispatchers.IO) {
-        val prefixes = LinkedHashSet(localSubnets(context))
+        val networks = wifiNetworks(context)
+        val prefixes = LinkedHashSet(subnetsOf(context, networks))
+        if (prefixes.isEmpty()) prefixes += interfaceSubnets()
         extraHost?.trim()?.takeIf { it.count { ch -> ch == '.' } == 3 }?.let { host ->
             prefixes += host.substringBeforeLast('.') + "."
         }
         if (prefixes.isEmpty()) return@withContext emptyList()
 
-        val factory: SocketFactory? = wifiNetworks(context)
-            .firstOrNull()
+        val factory: SocketFactory? = networks.firstOrNull()
             ?.let { network -> runCatching { network.socketFactory }.getOrNull() }
 
         val hosts = prefixes.flatMap { prefix -> (1..254).map { "$prefix$it" } }.distinct()
         val gate = Semaphore(CONCURRENCY)
-        var done = 0
+        val done = AtomicInteger()
 
         coroutineScope {
             hosts.map { host ->
                 async {
                     val open = gate.withPermit { reachable(host, port, timeoutMs, factory) }
-                    synchronized(this@coroutineScope) {
-                        done++
-                        if (done % 32 == 0) onProgress?.invoke(done)
-                    }
+                    val checked = done.incrementAndGet()
+                    if (checked % PROGRESS_EVERY == 0) onProgress?.invoke(checked)
                     if (open) host else null
                 }
             }.awaitAll().filterNotNull()

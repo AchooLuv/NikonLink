@@ -123,7 +123,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private var thumbLargeUnsupported = false
     private var extrasLoaded = false
     private var allHandles: List<Int> = emptyList()
-    private val kindByHandle = HashMap<Int, com.achooluv.nikonlink.camera.FileKind>()
+    private val kindByHandle = java.util.concurrent.ConcurrentHashMap<Int, com.achooluv.nikonlink.camera.FileKind>()
     private var loadedPages = 0
     private var connectJob: Job? = null
     private var reconnectJob: Job? = null
@@ -131,7 +131,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private var downloadJob: Job? = null
     private var userDisconnected = false
     private var currentHost: String = ""
-    private var lastScanSubnets: List<String> = emptyList()
 
     /** Set while we deliberately close a link, so the disconnect hook stays quiet. */
     @Volatile
@@ -233,7 +232,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 val storage = readStorage()
                 _identity.value = CameraIdentity(
                     model = info.model.ifBlank { "Nikon 相机" },
-                    manufacturer = info.manufacturer,
                     serial = info.serialNumber,
                     firmware = info.deviceVersion,
                     battery = runCatching { client.batteryLevel() }.getOrNull(),
@@ -294,7 +292,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
     /** Rescans the current LAN for a camera (Wi-Fi station mode). */
     private suspend fun scanLanForCamera(): String? {
         val subnets = LanScanner.localSubnets(app)
-        lastScanSubnets = subnets
         Diagnostics.log("STA 扫描网段：${subnets.ifEmpty { listOf("未取到本机网段") }.joinToString()}")
         val found = LanScanner.scan(
             context = app,
@@ -331,12 +328,13 @@ class NikonLinkRepository private constructor(private val app: Application) {
         reconnectJob = null
         keepAliveJob?.cancel()
         ConnectionService.stop(app)
-        suppressDisconnect = true
-        runCatching { client.close() }
-        suppressDisconnect = false
-        client.socketFactory = javax.net.SocketFactory.getDefault()
+        // Closing the session is a PTP round trip: keep it off the UI thread.
         scope.launch {
-            wifi.release()
+            suppressDisconnect = true
+            runCatching { client.close() }
+            suppressDisconnect = false
+            client.socketFactory = javax.net.SocketFactory.getDefault()
+            runCatching { wifi.release() }
             _state.value = ConnState.Idle
             _identity.value = null
             _files.value = emptyList()
@@ -393,11 +391,11 @@ class NikonLinkRepository private constructor(private val app: Application) {
         reconnectJob = null
         keepAliveJob?.cancel()
         keepAliveJob = null
-        suppressDisconnect = true
-        runCatching { client.close() }
-        suppressDisconnect = false
-        client.socketFactory = javax.net.SocketFactory.getDefault()
         scope.launch {
+            suppressDisconnect = true
+            runCatching { client.close() }
+            suppressDisconnect = false
+            client.socketFactory = javax.net.SocketFactory.getDefault()
             runCatching { wifi.release() }
             ConnectionService.stop(app)
             _state.value = ConnState.Idle
@@ -613,7 +611,8 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
-    /** Loads a JPEG preview for [handle]; returns null when the body has none. */    suspend fun thumbnail(handle: Int): ByteArray? {
+    /** Loads a JPEG preview for [handle]; returns null when the body has none. */
+    suspend fun thumbnail(handle: Int): ByteArray? {
         // Honour the "RAW 使用相机缩略图" switch: with it off, RAW cells stay as placeholders.
         if (!settings.showRawThumbnails.value &&
             kindByHandle[handle] == com.achooluv.nikonlink.camera.FileKind.RAW
@@ -774,7 +773,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
         is com.achooluv.nikonlink.ptp.PtpException -> "相机返回错误：${e.message}"
         is com.achooluv.nikonlink.ptp.PtpLinkException -> "PTP/IP 握手失败：${e.message}"
         is java.net.SocketTimeoutException -> timeoutHint()
-        is java.net.ConnectException -> "连不上相机端口：网络不可达，确认手机 Wi-Fi 已连到 NIKON_ 网络"
+        is java.net.ConnectException -> cannotReachHint()
         is java.net.UnknownHostException -> "地址无法解析，请检查手动填写的相机 IP"
         is IOException -> {
             val raw = e.message.orEmpty()
@@ -787,9 +786,23 @@ class NikonLinkRepository private constructor(private val app: Application) {
         else -> e.message ?: e.javaClass.simpleName
     }
 
-    private fun timeoutHint(): String =
-        "连接超时：没在 ${currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST }}:${Ptp.PORT} 找到相机。" +
-            "确认手机 Wi-Fi 已连上 NIKON_ 网络；若相机不在 192.168.1.x 网段，用「换 IP 重试」填写实际地址。"
+    private fun timeoutHint(): String {
+        val host = currentHost.ifBlank { CameraWifi.DEFAULT_CAMERA_HOST }
+        return if (settings.mode.value == ConnectMode.STA) {
+            "连接超时：没在 $host:${Ptp.PORT} 找到相机。确认手机和相机连的是同一个路由器 Wi-Fi，" +
+                "且没有开启「AP 隔离」；或用「手动 IP」填写相机地址。"
+        } else {
+            "连接超时：没在 $host:${Ptp.PORT} 找到相机。确认手机 Wi-Fi 已连上 NIKON_ 网络；" +
+                "若相机不在 192.168.1.x 网段，用「换 IP 重试」填写实际地址。"
+        }
+    }
+
+    private fun cannotReachHint(): String =
+        if (settings.mode.value == ConnectMode.STA) {
+            "连不上相机端口：确认相机已加入同一个路由器 Wi-Fi，且路由器没有开启「AP 隔离」"
+        } else {
+            "连不上相机端口：网络不可达，确认手机 Wi-Fi 已连到 NIKON_ 网络"
+        }
 
     fun isImported(file: CameraFile): Boolean = settings.isImported(file.handle, file.size)
 

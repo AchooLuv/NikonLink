@@ -46,9 +46,6 @@ class Downloader(
         val failedCount: Int = 0,
         val lastUri: String? = null,
     ) {
-        val fileFraction: Float
-            get() = if (fileSize <= 0) 0f else (fileBytes.toFloat() / fileSize).coerceIn(0f, 1f)
-
         val totalFraction: Float
             get() = if (totalSize <= 0) 0f else (totalBytes.toFloat() / totalSize).coerceIn(0f, 1f)
     }
@@ -153,6 +150,9 @@ class Downloader(
                         override fun write(b: Int) = raf.write(b)
                         override fun write(b: ByteArray, off: Int, len: Int) = raf.write(b, off, len)
                     }
+                    // Reused across chunks: a fresh 256 KiB buffer per chunk would
+                    // churn the heap during long transfers.
+                    val copyBuffer = ByteArray(256 * 1024)
                     if (supportsPartial) {
                         raf.seek(fileBytes)
                         var chunk = chunkSize
@@ -161,7 +161,7 @@ class Downloader(
                             val want = minOf(chunk.toLong(), file.size - fileBytes).toInt()
                             try {
                                 val written = client.downloadRange(file.handle, fileBytes, want) { input, count ->
-                                    input.copyTo(rafOut, count)
+                                    input.copyTo(rafOut, count, copyBuffer)
                                 }
                                 if (written <= 0L) throw IOException("相机在偏移 $fileBytes 处返回了空数据块")
                                 fileBytes += written
@@ -184,7 +184,7 @@ class Downloader(
                         // Firmware without GetPartialObject: one streaming pass, no resume.
                         raf.setLength(0)
                         client.downloadObject(file.handle) { input, count ->
-                            input.copyTo(rafOut, count)
+                            input.copyTo(rafOut, count, copyBuffer)
                             fileBytes += count
                             totalBytes += count
                             tick()
@@ -214,6 +214,9 @@ class Downloader(
                 emit()
             }
         }
+
+        // Import records are buffered while files are written; persist once here.
+        settings.flushImports()
 
         onProgress(
             Progress(

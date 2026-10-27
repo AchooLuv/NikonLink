@@ -99,7 +99,6 @@ class PtpProtocolTest {
         assertEquals("DSC_0001.NEF", info.filename)
         assertEquals(24_500_000L, info.compressedSize)
         assertEquals(Ptp.FORMAT_NEF, info.format)
-        assertTrue(info.isRaw)
         assertEquals(2026, info.captureTime?.let { millisToYear(it) })
     }
 

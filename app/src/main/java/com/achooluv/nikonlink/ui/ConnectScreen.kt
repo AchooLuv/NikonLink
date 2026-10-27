@@ -376,19 +376,26 @@ private fun StatusEmblem(state: ConnState) {
     val busy = state is ConnState.Connecting || state is ConnState.Reconnecting
     val failed = state is ConnState.Error
 
-    val transition = rememberInfiniteTransition(label = "emblem")
-    val spin by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Restart),
-        label = "spin",
-    )
-    val pulse by transition.animateFloat(
-        initialValue = 0.10f,
-        targetValue = 0.26f,
-        animationSpec = infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Reverse),
-        label = "pulse",
-    )
+    // Only animate while a connection is actually in flight: an infinite
+    // transition would keep invalidating this subtree (and redrawing the ring)
+    // every frame even on the idle screen.
+    var spin = 0f
+    var pulse = 0f
+    if (busy) {
+        val transition = rememberInfiniteTransition(label = "emblem")
+        spin = transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Restart),
+            label = "spin",
+        ).value
+        pulse = transition.animateFloat(
+            initialValue = 0.10f,
+            targetValue = 0.26f,
+            animationSpec = infiniteRepeatable(tween(1600, easing = LinearEasing), RepeatMode.Reverse),
+            label = "pulse",
+        ).value
+    }
 
     val ringColor = when {
         connected -> NikonYellow

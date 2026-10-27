@@ -45,22 +45,18 @@ data class CameraFile(
 
 /** Capability knobs that vary by body. */
 data class CameraProfile(
-    val displayName: String,
     val supportsPartialObject: Boolean,
     val chunkSize: Int,
     val supportsLargeThumb: Boolean,
-    val supportsTransferList: Boolean,
 ) {
     companion object {
         /** Sensible defaults for Nikon Z bodies on Wi-Fi. */
         fun forModel(model: String): CameraProfile {
             val m = model.uppercase(Locale.US)
             return CameraProfile(
-                displayName = model.ifBlank { "Nikon" },
                 supportsPartialObject = true,
                 chunkSize = 4 * 1024 * 1024,
                 supportsLargeThumb = m.contains("Z") || m.contains("D"),
-                supportsTransferList = true,
             )
         }
     }
@@ -69,7 +65,6 @@ data class CameraProfile(
 /** Identity of the connected body. */
 data class CameraIdentity(
     val model: String,
-    val manufacturer: String,
     val serial: String,
     val firmware: String,
     val battery: Int?,

@@ -44,12 +44,9 @@ private val scheme = darkColorScheme(
 
 data class NikonLinkColors(
     val card: Color = InkCard,
-    val raised: Color = InkRaised,
     val line: Color = InkLine,
     val dim: Color = PaperDim,
     val accent: Color = NikonYellow,
-    val success: Color = Mint,
-    val danger: Color = Ember,
 )
 
 private val LocalColors = staticCompositionLocalOf { NikonLinkColors() }

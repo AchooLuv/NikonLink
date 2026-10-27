@@ -125,6 +125,18 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 
 ## 更新日志
 
+**v0.1.21**
+- 代码检查与清理（不改功能）：
+  - 缩略图缓存从「一张共享的 `SnapshotStateMap`」改为**每个 handle 独立快照状态**：加载一张图只刷新对应格子，不再让整个网格重组
+  - 「已下载」记录改为内存缓存 + 批量写盘（原来每个格子、每次重组都会重新读取并复制一次 SharedPreferences 集合）
+  - 空闲/已连接时不再运行无限动画（连接徽标只有在连接中才转动），减少后台重绘与耗电
+  - 断开 / 取消连接时的 PTP `CloseSession` 移到 IO 线程，避免卡主线程
+  - 分块下载复用同一个 256 KiB 拷贝缓冲；LAN 扫描改用原子计数、网段只解析一次
+  - 前台通知更新只在首次 `startForeground`，后续走 `notify`
+  - 错误提示区分 AP / STA 两种模式（不再在 STA 下提示「连 NIKON_ 网络」）
+  - 删除无用代码：`CameraProfile.displayName/supportsTransferList`、`CameraIdentity.manufacturer`、`ObjectInfo.isRaw/isJpeg/isMovie/displayName`、`Progress.fileFraction`、`NikonLinkColors.raised/success/danger`
+- 已知限制：列目录时每页 120 个 `ObjectInfo` 只能串行请求（PTP 事务模型限制），首次进入浏览页的等待时间由此决定
+
 **v0.1.20**
 - 连接教程增加进出动画：淡入 + 轻微上滑（约 260 ms），关闭时反向淡出下滑，不再硬切
 - 系统返回/侧滑手势现在**先关闭教程**并停在连接页；再次返回才退出 App

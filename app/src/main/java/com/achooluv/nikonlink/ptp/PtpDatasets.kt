@@ -86,12 +86,6 @@ data class ObjectInfo(
     val captureTime: Long?
         get() = parsePtpDateTime(captureDateRaw)
 
-    val displayName: String
-        get() = filename.ifBlank { "IMG" }
-
-    val isRaw: Boolean get() = format == Ptp.FORMAT_NEF || format == Ptp.FORMAT_UNDEFINED
-    val isJpeg: Boolean get() = format == Ptp.FORMAT_JPEG
-    val isMovie: Boolean get() = format == Ptp.FORMAT_MOV
     val isFolder: Boolean get() = format == Ptp.FORMAT_ASSOCIATION
 }
 
