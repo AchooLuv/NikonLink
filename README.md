@@ -123,10 +123,6 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 
 `keystore/nikonlink-release.jks` 为发布签名（口令写在 `app/build.gradle.kts`），用于让后续版本可以覆盖安装。
 
-## 更新日志
-
-每个版本的改动与安装包都写在 [Releases](https://github.com/AchooLuv/NikonLink/releases) 里。
-
 ## 协议致谢
 
 PTP/IP 传输与尼康厂商操作的细节参考了开源项目 [AeroShutter](https://github.com/subhashraveendran/aero-shutter)（MIT），本项目以自己的 Kotlin 实现重写。PTP 基础协议见 ISO 15740。
