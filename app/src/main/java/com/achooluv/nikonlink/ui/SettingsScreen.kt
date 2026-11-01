@@ -1,16 +1,19 @@
-@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-
 package com.achooluv.nikonlink.ui
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,7 +33,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,6 +42,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -53,9 +58,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,12 +72,21 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.achooluv.nikonlink.BuildConfig
+import com.achooluv.nikonlink.Diagnostics
 import com.achooluv.nikonlink.NikonLinkRepository
 import com.achooluv.nikonlink.camera.formatBytes
 import com.achooluv.nikonlink.data.SettingsStore
 import com.achooluv.nikonlink.update.UpdateChecker
 import com.achooluv.nikonlink.update.UpdateInfo
 import com.achooluv.nikonlink.update.UpdateManager
+
+/** The four detail pages settings drills into. */
+private enum class SettingsPage(val title: String) {
+    TRANSPORT("传输"),
+    CONNECTION("连接"),
+    STORAGE("存储"),
+    DIAGNOSTICS("诊断"),
+}
 
 @Composable
 fun SettingsScreen(repo: NikonLinkRepository) {
@@ -83,16 +98,15 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     val pairJpeg by settings.pairJpeg.collectAsStateWithLifecycle()
     val chunk by settings.chunkSize.collectAsStateWithLifecycle()
     val eventsSupported by repo.eventsSupported.collectAsStateWithLifecycle()
+
     val context = LocalContext.current
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val clipboard = LocalClipboardManager.current
     var confirmClear by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
-    // Every group starts collapsed; a header is one fixed row, so toggling it never
-    // changes the header's own size.
-    var openTransport by rememberSaveable { mutableStateOf(false) }
-    var openConnection by rememberSaveable { mutableStateOf(false) }
-    var openStorage by rememberSaveable { mutableStateOf(false) }
-    var openDiagnostics by rememberSaveable { mutableStateOf(false) }
+
+    // Drill-down navigation: the list never changes height, each section is a page.
+    var pageName by rememberSaveable { mutableStateOf<String?>(null) }
+    val page = pageName?.let { name -> SettingsPage.entries.firstOrNull { it.name == name } }
 
     val versionName = BuildConfig.VERSION_NAME
     val updates = remember { UpdateManager.get(context) }
@@ -123,284 +137,75 @@ fun SettingsScreen(repo: NikonLinkRepository) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(horizontal = 20.dp)) {
-            Spacer(Modifier.height(6.dp))
-            Text("设置", color = Paper, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(3.dp))
-            Text("只保留必要选项", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
-        }
+    BackHandler(enabled = page != null) { pageName = null }
 
-        Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(start = 20.dp, end = 20.dp, bottom = 120.dp),
-        ) {
-            Spacer(Modifier.height(18.dp))
-
-            CollapsibleSection(
-                title = "传输",
-                expanded = openTransport,
-                onToggle = { openTransport = !openTransport },
-            ) {
-                NikonCard {
-                    SettingSwitch(
-                        title = "拍摄后自动拉取",
-                        subtitle = if (eventsSupported) {
-                            "相机拍到新照片时自动下载到手机。默认关闭；开启时只拉之后拍的照片，不会把卡里旧照片一起下载。"
-                        } else {
-                            "这台相机没有开放 PTP/IP 事件通道，自动拉取不可用；仍可在「浏览」里手动下载。"
-                        },
-                        checked = autoPull,
-                        onCheckedChange = { repo.setAutoPull(it) },
-                    )
-                    HorizontalDivider(
-                        color = NikonLinkTheme.colors.line,
-                        modifier = Modifier.padding(vertical = 14.dp),
-                    )
-                    Caption("分块大小")
-                    Spacer(Modifier.height(8.dp))
-                    // Four equal segments: never wraps, even on narrow screens or large fonts.
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        SettingsStore.CHUNK_CHOICES.forEach { size ->
-                            val selected = chunk == size
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(38.dp)
-                                    .clip(RoundedCornerShape(11.dp))
-                                    .background(if (selected) NikonYellow else Ink)
-                                    .border(
-                                        width = 1.dp,
-                                        color = if (selected) NikonYellow else NikonLinkTheme.colors.line,
-                                        shape = RoundedCornerShape(11.dp),
-                                    )
-                                    .clickable { settings.setChunkSize(size) },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = SettingsStore.chunkLabel(size),
-                                    color = if (selected) Color(0xFF161200) else PaperDim,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "块越大往返次数越少、速度越快；网络不稳时用 1–2 MiB 更平滑。断点续传始终按块边界恢复。",
-                        color = PaperDim,
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
-                    )
-                }
+    AnimatedContent(
+        targetState = page,
+        transitionSpec = {
+            val entering = targetState != null
+            val slide = tween<androidx.compose.ui.unit.IntOffset>(240)
+            if (entering) {
+                (slideInHorizontally(slide) { it / 6 } + fadeIn(tween(200))) togetherWith
+                    (slideOutHorizontally(slide) { -it / 10 } + fadeOut(tween(150)))
+            } else {
+                (slideInHorizontally(slide) { -it / 10 } + fadeIn(tween(200))) togetherWith
+                    (slideOutHorizontally(slide) { it / 6 } + fadeOut(tween(150)))
             }
-
-            CollapsibleSection(
-                title = "连接",
-                expanded = openConnection,
-                onToggle = { openConnection = !openConnection },
-            ) {
-                NikonCard {
-                    SettingSwitch(
-                        title = "保持连接活跃",
-                        subtitle = "定期发一次轻量心跳，掉线后自动重连（指数退避，最长 30 秒一次）。信号弱时把间隔调大更省电。",
-                        checked = keepAlive,
-                        onCheckedChange = {
-                            settings.setKeepAlive(it)
-                            repo.restartKeepAlive()
-                        },
-                    )
-                    if (keepAlive) {
-                        Spacer(Modifier.height(10.dp))
-                        Caption("心跳间隔")
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(10, 15, 30, 60).forEach { seconds ->
-                                FilterChip(
-                                    selected = keepAliveSeconds == seconds,
-                                    onClick = {
-                                        settings.setKeepAliveSeconds(seconds)
-                                        repo.restartKeepAlive()
-                                    },
-                                    label = { Text("${seconds}s", fontSize = 12.sp) },
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        containerColor = Ink,
-                                        labelColor = PaperDim,
-                                        selectedContainerColor = NikonYellow,
-                                        selectedLabelColor = Color(0xFF161200),
-                                    ),
-                                    border = FilterChipDefaults.filterChipBorder(
-                                        enabled = true,
-                                        selected = keepAliveSeconds == seconds,
-                                        borderColor = NikonLinkTheme.colors.line,
-                                        selectedBorderColor = NikonYellow,
-                                    ),
-                                )
-                            }
-                        }
-                    }
-                    HorizontalDivider(
-                        color = NikonLinkTheme.colors.line,
-                        modifier = Modifier.padding(vertical = 14.dp),
-                    )
-                    SettingSwitch(
-                        title = "RAW 使用相机缩略图",
-                        subtitle = "RAW 只下载完整文件不解码；预览统一用相机内嵌 JPEG 缩略图。",
-                        checked = rawThumbs,
-                        onCheckedChange = { settings.setShowRawThumbnails(it) },
-                    )
-                    HorizontalDivider(
-                        color = NikonLinkTheme.colors.line,
-                        modifier = Modifier.padding(vertical = 14.dp),
-                    )
-                    SettingSwitch(
-                        title = "RAW 顺带下载配对 JPEG",
-                        subtitle = "选中 DSC_0001.NEF 时，如果卡里有同名的 DSC_0001.JPG 就一起下载，方便直接预览与分享。",
-                        checked = pairJpeg,
-                        onCheckedChange = { settings.setPairJpeg(it) },
-                    )
-                }
-            }
-
-            CollapsibleSection(
-                title = "存储",
-                expanded = openStorage,
-                onToggle = { openStorage = !openStorage },
-            ) {
-                NikonCard {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(Modifier.weight(1f)) {
-                            Text("保存位置", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.height(4.dp))
-                            Text("Pictures/NikonLink · Movies/NikonLink", color = PaperDim, fontSize = 11.sp)
-                        }
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    HorizontalDivider(color = NikonLinkTheme.colors.line)
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "下载记录（用于跳过已下载文件）",
-                        color = PaperDim,
-                        fontSize = 13.sp,
-                        modifier = Modifier.clickable { confirmClear = true }.padding(vertical = 4.dp),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "重置连接与全部记录",
-                        color = PaperDim,
-                        fontSize = 13.sp,
-                        modifier = Modifier.clickable { confirmReset = true }.padding(vertical = 4.dp),
-                    )
-                }
-            }
-
-            CollapsibleSection(
-                title = "诊断",
-                expanded = openDiagnostics,
-                onToggle = { openDiagnostics = !openDiagnostics },
-            ) {
-                NikonCard {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(Modifier.weight(1f)) {
-                            Text("复制诊断信息", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "包含相机型号、固件、连接步骤与最近 150 条协议日志。出问题时贴到 GitHub Issue 即可定位。",
-                                color = PaperDim,
-                                fontSize = 11.sp,
-                                lineHeight = 16.sp,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "复制到剪贴板",
-                        color = NikonYellow,
-                        fontSize = 13.sp,
-                        modifier = Modifier.clickable {
-                            clipboard.setText(
-                                androidx.compose.ui.text.AnnotatedString(
-                                    com.achooluv.nikonlink.Diagnostics.dump(context),
-                                ),
-                            )
-                            android.widget.Toast.makeText(context, "诊断信息已复制", android.widget.Toast.LENGTH_SHORT).show()
-                        }.padding(vertical = 4.dp),
-                    )
-                    HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 10.dp))
-                    Text(
-                        "清空日志",
-                        color = PaperDim,
-                        fontSize = 13.sp,
-                        modifier = Modifier.clickable {
-                            com.achooluv.nikonlink.Diagnostics.clear()
-                            android.widget.Toast.makeText(context, "日志已清空", android.widget.Toast.LENGTH_SHORT).show()
-                        }.padding(vertical = 4.dp),
-                    )
-                }
-            }
-
-        Spacer(Modifier.height(20.dp))
-        SectionTitle("关于")
-        Spacer(Modifier.height(10.dp))
-        NikonCard {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("NikonLink", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Mono(
-                        "v$versionName",
-                        color = PaperDim,
-                        size = 12,
-                    )
-                    UpdateBadge(
-                        state = updateState,
-                        onClick = {
-                            if (updateState is UpdateManager.State.Idle) {
-                                updates.check(versionName, force = true)
-                            } else {
-                                showUpdate = true
-                            }
-                        },
-                    )
-                }
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "尼康 Z 系列无线图传 · PTP/IP 直连 · 仅 arm64",
-                color = PaperDim,
-                fontSize = 12.sp,
-            )
-            Spacer(Modifier.height(14.dp))
-            Text(
-                "github.com/AchooLuv/NikonLink",
-                color = NikonYellow,
-                fontSize = 12.sp,
-                modifier = Modifier.clickable {
-                    runCatching {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/AchooLuv/NikonLink")),
-                        )
+        },
+        label = "settingsPage",
+    ) { target ->
+        if (target == null) {
+            SettingsHome(
+                autoPull = autoPull,
+                chunk = chunk,
+                keepAlive = keepAlive,
+                keepAliveSeconds = keepAliveSeconds,
+                versionName = versionName,
+                updateState = updateState,
+                onOpen = { pageName = it.name },
+                onVersionClick = {
+                    if (updateState is UpdateManager.State.Idle) {
+                        updates.check(versionName, force = true)
+                    } else {
+                        showUpdate = true
                     }
                 },
+                onOpenRepo = { openUrl(context, "https://github.com/AchooLuv/NikonLink") },
             )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "协议实现参考了开源项目 AeroShutter（MIT）对 PTP/IP 与 Nikon 厂商操作的逆向成果。",
-                color = PaperDim.copy(alpha = 0.75f),
-                fontSize = 10.5.sp,
-                lineHeight = 15.sp,
+        } else {
+            SettingsDetail(
+                page = target,
+                onBack = { pageName = null },
+                autoPull = autoPull,
+                eventsSupported = eventsSupported,
+                chunk = chunk,
+                keepAlive = keepAlive,
+                keepAliveSeconds = keepAliveSeconds,
+                rawThumbs = rawThumbs,
+                pairJpeg = pairJpeg,
+                onAutoPull = { repo.setAutoPull(it) },
+                onChunk = { settings.setChunkSize(it) },
+                onKeepAlive = {
+                    settings.setKeepAlive(it)
+                    repo.restartKeepAlive()
+                },
+                onKeepAliveSeconds = {
+                    settings.setKeepAliveSeconds(it)
+                    repo.restartKeepAlive()
+                },
+                onRawThumbs = { settings.setShowRawThumbnails(it) },
+                onPairJpeg = { settings.setPairJpeg(it) },
+                onClearRecords = { confirmClear = true },
+                onResetAll = { confirmReset = true },
+                onCopyDiagnostics = {
+                    clipboard.setText(AnnotatedString(Diagnostics.dump(context)))
+                    toast(context, "诊断信息已复制")
+                },
+                onClearLogs = {
+                    Diagnostics.clear()
+                    toast(context, "日志已清空")
+                },
             )
-        }
-
-        Spacer(Modifier.height(40.dp))
         }
     }
 
@@ -419,6 +224,7 @@ fun SettingsScreen(repo: NikonLinkRepository) {
             onOpenReleases = { updates.openReleasesPage(context) },
         )
     }
+
     if (confirmReset) {
         AlertDialog(
             onDismissRequest = { confirmReset = false },
@@ -465,7 +271,402 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     }
 }
 
-/** Kept as a helper so the clear-records row reads as destructive but stays calm. */
+@Composable
+private fun SettingsHome(
+    autoPull: Boolean,
+    chunk: Int,
+    keepAlive: Boolean,
+    keepAliveSeconds: Int,
+    versionName: String,
+    updateState: UpdateManager.State,
+    onOpen: (SettingsPage) -> Unit,
+    onVersionClick: () -> Unit,
+    onOpenRepo: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.padding(horizontal = 20.dp)) {
+            Spacer(Modifier.height(6.dp))
+            Text("设置", color = Paper, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(3.dp))
+            Text("只保留必要选项", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
+        }
+
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+        ) {
+            Spacer(Modifier.height(18.dp))
+            NikonCard(contentPadding = 6) {
+                SettingsRow(
+                    title = "传输",
+                    value = "自动拉取${if (autoPull) "开" else "关"} · ${SettingsStore.chunkLabel(chunk)}",
+                    onClick = { onOpen(SettingsPage.TRANSPORT) },
+                )
+                RowDivider()
+                SettingsRow(
+                    title = "连接",
+                    value = if (keepAlive) "心跳 ${keepAliveSeconds}s" else "心跳关闭",
+                    onClick = { onOpen(SettingsPage.CONNECTION) },
+                )
+                RowDivider()
+                SettingsRow(
+                    title = "存储",
+                    value = "Pictures / Movies",
+                    onClick = { onOpen(SettingsPage.STORAGE) },
+                )
+                RowDivider()
+                SettingsRow(
+                    title = "诊断",
+                    value = "复制诊断信息",
+                    onClick = { onOpen(SettingsPage.DIAGNOSTICS) },
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionTitle("关于")
+            Spacer(Modifier.height(10.dp))
+            AboutCard(versionName = versionName, updateState = updateState, onVersionClick = onVersionClick, onOpenRepo = onOpenRepo)
+            Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+@Composable
+private fun SettingsDetail(
+    page: SettingsPage,
+    onBack: () -> Unit,
+    autoPull: Boolean,
+    eventsSupported: Boolean,
+    chunk: Int,
+    keepAlive: Boolean,
+    keepAliveSeconds: Int,
+    rawThumbs: Boolean,
+    pairJpeg: Boolean,
+    onAutoPull: (Boolean) -> Unit,
+    onChunk: (Int) -> Unit,
+    onKeepAlive: (Boolean) -> Unit,
+    onKeepAliveSeconds: (Int) -> Unit,
+    onRawThumbs: (Boolean) -> Unit,
+    onPairJpeg: (Boolean) -> Unit,
+    onClearRecords: () -> Unit,
+    onResetAll: () -> Unit,
+    onCopyDiagnostics: () -> Unit,
+    onClearLogs: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 6.dp, end = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回", tint = Paper)
+            }
+            Text(page.title, color = Paper, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+        ) {
+            Spacer(Modifier.height(10.dp))
+            when (page) {
+                SettingsPage.TRANSPORT -> TransportPanel(
+                    autoPull = autoPull,
+                    eventsSupported = eventsSupported,
+                    chunk = chunk,
+                    onAutoPull = onAutoPull,
+                    onChunk = onChunk,
+                )
+                SettingsPage.CONNECTION -> ConnectionPanel(
+                    keepAlive = keepAlive,
+                    keepAliveSeconds = keepAliveSeconds,
+                    rawThumbs = rawThumbs,
+                    pairJpeg = pairJpeg,
+                    onKeepAlive = onKeepAlive,
+                    onKeepAliveSeconds = onKeepAliveSeconds,
+                    onRawThumbs = onRawThumbs,
+                    onPairJpeg = onPairJpeg,
+                )
+                SettingsPage.STORAGE -> StoragePanel(
+                    onClearRecords = onClearRecords,
+                    onResetAll = onResetAll,
+                )
+                SettingsPage.DIAGNOSTICS -> DiagnosticsPanel(
+                    onCopy = onCopyDiagnostics,
+                    onClear = onClearLogs,
+                )
+            }
+            Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+@Composable
+private fun TransportPanel(
+    autoPull: Boolean,
+    eventsSupported: Boolean,
+    chunk: Int,
+    onAutoPull: (Boolean) -> Unit,
+    onChunk: (Int) -> Unit,
+) {
+    NikonCard {
+        SettingSwitch(
+            title = "拍摄后自动拉取",
+            subtitle = if (eventsSupported) {
+                "相机拍到新照片时自动下载到手机。默认关闭；开启时只拉之后拍的照片，不会把卡里旧照片一起下载。"
+            } else {
+                "这台相机没有开放 PTP/IP 事件通道，自动拉取不可用；仍可在「浏览」里手动下载。"
+            },
+            checked = autoPull,
+            onCheckedChange = onAutoPull,
+        )
+        HorizontalDivider(
+            color = NikonLinkTheme.colors.line,
+            modifier = Modifier.padding(vertical = 16.dp),
+        )
+        Caption("分块大小")
+        Spacer(Modifier.height(10.dp))
+        // Four equal segments: never wraps, even on narrow screens or large fonts.
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            SettingsStore.CHUNK_CHOICES.forEach { size ->
+                val selected = chunk == size
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (selected) NikonYellow else Ink)
+                        .border(
+                            width = 1.dp,
+                            color = if (selected) NikonYellow else NikonLinkTheme.colors.line,
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        .clickable { onChunk(size) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = SettingsStore.chunkLabel(size),
+                        color = if (selected) Color(0xFF161200) else PaperDim,
+                        fontSize = 12.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "块越大往返次数越少、速度越快；网络不稳时用 1–2 MiB 更平滑。断点续传始终按块边界恢复。",
+            color = PaperDim,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+        )
+    }
+}
+
+@Composable
+private fun ConnectionPanel(
+    keepAlive: Boolean,
+    keepAliveSeconds: Int,
+    rawThumbs: Boolean,
+    pairJpeg: Boolean,
+    onKeepAlive: (Boolean) -> Unit,
+    onKeepAliveSeconds: (Int) -> Unit,
+    onRawThumbs: (Boolean) -> Unit,
+    onPairJpeg: (Boolean) -> Unit,
+) {
+    NikonCard {
+        SettingSwitch(
+            title = "保持连接活跃",
+            subtitle = "定期发一次轻量心跳，掉线后自动重连（指数退避，最长 30 秒一次）。信号弱时把间隔调大更省电。",
+            checked = keepAlive,
+            onCheckedChange = onKeepAlive,
+        )
+        if (keepAlive) {
+            Spacer(Modifier.height(12.dp))
+            Caption("心跳间隔")
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(10, 15, 30, 60).forEach { seconds ->
+                    FilterChip(
+                        selected = keepAliveSeconds == seconds,
+                        onClick = { onKeepAliveSeconds(seconds) },
+                        label = { Text("${seconds}s", fontSize = 12.sp) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = Ink,
+                            labelColor = PaperDim,
+                            selectedContainerColor = NikonYellow,
+                            selectedLabelColor = Color(0xFF161200),
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = keepAliveSeconds == seconds,
+                            borderColor = NikonLinkTheme.colors.line,
+                            selectedBorderColor = NikonYellow,
+                        ),
+                    )
+                }
+            }
+        }
+        HorizontalDivider(
+            color = NikonLinkTheme.colors.line,
+            modifier = Modifier.padding(vertical = 16.dp),
+        )
+        SettingSwitch(
+            title = "RAW 使用相机缩略图",
+            subtitle = "RAW 只下载完整文件不解码；预览统一用相机内嵌 JPEG 缩略图。",
+            checked = rawThumbs,
+            onCheckedChange = onRawThumbs,
+        )
+        HorizontalDivider(
+            color = NikonLinkTheme.colors.line,
+            modifier = Modifier.padding(vertical = 16.dp),
+        )
+        SettingSwitch(
+            title = "RAW 顺带下载配对 JPEG",
+            subtitle = "选中 DSC_0001.NEF 时，如果卡里有同名的 DSC_0001.JPG 就一起下载，方便直接预览与分享。",
+            checked = pairJpeg,
+            onCheckedChange = onPairJpeg,
+        )
+    }
+}
+
+@Composable
+private fun StoragePanel(onClearRecords: () -> Unit, onResetAll: () -> Unit) {
+    NikonCard {
+        Text("保存位置", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(4.dp))
+        Text("Pictures/NikonLink · Movies/NikonLink", color = PaperDim, fontSize = 11.sp)
+        HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 16.dp))
+        ActionRow("清除下载记录", "只忘记哪些文件已下载，不删除相册里的文件", onClearRecords)
+        Spacer(Modifier.height(14.dp))
+        ActionRow("重置连接与全部记录", "清空 SSID/密码、偏好与断点文件", onResetAll)
+    }
+}
+
+@Composable
+private fun DiagnosticsPanel(onCopy: () -> Unit, onClear: () -> Unit) {
+    NikonCard {
+        Text("复制诊断信息", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "包含相机型号、固件、连接步骤与最近 150 条协议日志。出问题时贴到 GitHub Issue 即可定位。",
+            color = PaperDim,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "复制到剪贴板",
+            color = NikonYellow,
+            fontSize = 13.sp,
+            modifier = Modifier.clickable(onClick = onCopy).padding(vertical = 4.dp),
+        )
+        HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 12.dp))
+        Text(
+            "清空日志",
+            color = PaperDim,
+            fontSize = 13.sp,
+            modifier = Modifier.clickable(onClick = onClear).padding(vertical = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun AboutCard(
+    versionName: String,
+    updateState: UpdateManager.State,
+    onVersionClick: () -> Unit,
+    onOpenRepo: () -> Unit,
+) {
+    NikonCard {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("NikonLink", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Mono("v$versionName", color = PaperDim, size = 12)
+                UpdateBadge(state = updateState, onClick = onVersionClick)
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text("尼康 Z 系列无线图传 · PTP/IP 直连 · 仅 arm64", color = PaperDim, fontSize = 12.sp)
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "github.com/AchooLuv/NikonLink",
+            color = NikonYellow,
+            fontSize = 12.sp,
+            modifier = Modifier.clickable(onClick = onOpenRepo),
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "协议实现参考了开源项目 AeroShutter（MIT）对 PTP/IP 与 Nikon 厂商操作的逆向成果。",
+            color = PaperDim.copy(alpha = 0.75f),
+            fontSize = 10.5.sp,
+            lineHeight = 15.sp,
+        )
+    }
+}
+
+/** One drilled-in row: title on the left, current value and a chevron on the right. */
+@Composable
+private fun SettingsRow(title: String, value: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            color = Paper,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        Text(value, color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
+        Spacer(Modifier.width(4.dp))
+        Icon(
+            Icons.Rounded.ChevronRight,
+            contentDescription = null,
+            tint = PaperDim,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+@Composable
+private fun ActionRow(title: String, subtitle: String, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+    ) {
+        Text(title, color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(3.dp))
+        Text(subtitle, color = PaperDim, fontSize = 11.sp, lineHeight = 16.sp)
+    }
+}
+
+@Composable
+private fun RowDivider() {
+    HorizontalDivider(
+        color = NikonLinkTheme.colors.line,
+        modifier = Modifier.padding(horizontal = 14.dp),
+    )
+}
+
 @Composable
 private fun SettingSwitch(
     title: String,
@@ -672,60 +873,10 @@ private fun progressLabel(state: UpdateManager.State): String = when (state) {
     else -> ""
 }
 
-/**
- * A settings group folded by default. The header is a single fixed-height row, so
- * toggling never resizes it — only the panel below appears or disappears.
- */
-@Composable
-private fun CollapsibleSection(
-    title: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    val rotation by animateFloatAsState(
-        targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(180, easing = FastOutSlowInEasing),
-        label = "chevron",
-    )
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                // No ripple: a full-width highlight flashing on tap read as a glitch.
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onToggle,
-                )
-                .padding(vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                title,
-                modifier = Modifier.weight(1f),
-                color = Paper,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 1.2.sp,
-            )
-            Icon(
-                imageVector = Icons.Rounded.ExpandMore,
-                contentDescription = if (expanded) "收起" else "展开",
-                tint = PaperDim,
-                modifier = Modifier
-                    .size(22.dp)
-                    .rotate(rotation),
-            )
-        }
-        // No height/fade transition: interpolating layout stuttered, and the panel is
-        // small enough that a single clean switch looks better than any tween.
-        if (expanded) {
-            Column {
-                content()
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-    }
+private fun openUrl(context: Context, url: String) {
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+}
+
+private fun toast(context: Context, text: String) {
+    android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show()
 }
