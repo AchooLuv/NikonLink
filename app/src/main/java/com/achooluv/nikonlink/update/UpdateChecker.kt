@@ -89,18 +89,26 @@ object UpdateChecker {
     /**
      * Release bodies are GitHub-flavoured markdown; the dialog shows plain text, so
      * strip the inline markers and heading hashes instead of showing them verbatim.
+     * Install / keyword lines are release-page boilerplate and are dropped here.
      */
     fun readableNotes(raw: String): String = raw
+        .replace("**", "")
+        .replace("`", "")
         .lineSequence()
-        .joinToString("\n") { line ->
+        .map { line ->
             line.trimStart()
                 .removePrefix("##### ").removePrefix("#### ")
                 .removePrefix("### ").removePrefix("## ").removePrefix("# ")
         }
-        .replace("**", "")
-        .replace("`", "")
+        .filterNot { BOILERPLATE.containsMatchIn(it) }
+        .joinToString("\n")
         .replace(Regex("\n{3,}"), "\n\n")
         .trim()
+
+    private val BOILERPLATE = Regex(
+        "^(安装|安装包|安装方式|keywords|keyword|关键词|tags?)\\s*[:：]",
+        RegexOption.IGNORE_CASE,
+    )
 
     private fun request(url: String): String {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {

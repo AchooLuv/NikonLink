@@ -54,4 +54,15 @@ class UpdateCheckerTest {
         assertTrue(text.contains("修复"))
         assertTrue(text.contains("旧记录"))
     }
+
+    @Test
+    fun installAndKeywordLinesAreDropped() {
+        val raw = "修复若干问题\n\n**安装**：Android 10+ / arm64-v8a，约 2.27 MB。\n\n" +
+            "Keywords: 尼康图传, Nikon wireless transfer\n"
+        val text = UpdateChecker.readableNotes(raw)
+        assertFalse(text.contains("安装"))
+        assertFalse(text.contains("Keywords"))
+        assertFalse(text.contains("尼康图传"))
+        assertEquals("修复若干问题", text)
+    }
 }
