@@ -4,14 +4,13 @@ package com.achooluv.nikonlink.ui
 
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,7 +30,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -55,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -88,7 +87,8 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     var confirmClear by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
-    // All panels start collapsed; the header summary tells you what is inside.
+    // Every group starts collapsed; a header is one fixed row, so toggling it never
+    // changes the header's own size.
     var openTransport by rememberSaveable { mutableStateOf(false) }
     var openConnection by rememberSaveable { mutableStateOf(false) }
     var openStorage by rememberSaveable { mutableStateOf(false) }
@@ -141,7 +141,6 @@ fun SettingsScreen(repo: NikonLinkRepository) {
 
             CollapsibleSection(
                 title = "传输",
-                summary = "自动拉取${if (autoPull) "开启" else "关闭"} · 分块 ${SettingsStore.chunkLabel(chunk)}",
                 expanded = openTransport,
                 onToggle = { openTransport = !openTransport },
             ) {
@@ -202,11 +201,6 @@ fun SettingsScreen(repo: NikonLinkRepository) {
 
             CollapsibleSection(
                 title = "连接",
-                summary = if (keepAlive) {
-                    "心跳 ${keepAliveSeconds}s · 配对 JPEG ${if (pairJpeg) "开" else "关"}"
-                } else {
-                    "心跳关闭 · 掉线不自动重连"
-                },
                 expanded = openConnection,
                 onToggle = { openConnection = !openConnection },
             ) {
@@ -275,7 +269,6 @@ fun SettingsScreen(repo: NikonLinkRepository) {
 
             CollapsibleSection(
                 title = "存储",
-                summary = "Pictures / Movies · 下载记录",
                 expanded = openStorage,
                 onToggle = { openStorage = !openStorage },
             ) {
@@ -308,7 +301,6 @@ fun SettingsScreen(repo: NikonLinkRepository) {
 
             CollapsibleSection(
                 title = "诊断",
-                summary = "复制诊断信息 · 清空日志",
                 expanded = openDiagnostics,
                 onToggle = { openDiagnostics = !openDiagnostics },
             ) {
@@ -681,54 +673,58 @@ private fun progressLabel(state: UpdateManager.State): String = when (state) {
 }
 
 /**
- * A settings group that starts folded, showing a one-line summary of its current
- * state so the page stays scannable without hiding what is configured.
+ * A settings group folded by default. The header is a single fixed-height row, so
+ * toggling never resizes it — only the panel below appears or disappears.
  */
 @Composable
 private fun CollapsibleSection(
     title: String,
-    summary: String,
     expanded: Boolean,
     onToggle: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "chevron",
+    )
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onToggle)
-                .padding(vertical = 14.dp),
+                // No ripple: a full-width highlight flashing on tap read as a glitch.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onToggle,
+                )
+                .padding(vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    title,
-                    color = Paper,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 1.2.sp,
-                )
-                if (!expanded) {
-                    Spacer(Modifier.height(3.dp))
-                    Text(summary, color = NikonLinkTheme.colors.dim, fontSize = 11.sp)
-                }
-            }
+            Text(
+                title,
+                modifier = Modifier.weight(1f),
+                color = Paper,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.2.sp,
+            )
             Icon(
-                imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                imageVector = Icons.Rounded.ExpandMore,
                 contentDescription = if (expanded) "收起" else "展开",
                 tint = PaperDim,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier
+                    .size(22.dp)
+                    .rotate(rotation),
             )
         }
-        AnimatedVisibility(
-            visible = expanded,
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically(),
-        ) {
+        // No height/fade transition: interpolating layout stuttered, and the panel is
+        // small enough that a single clean switch looks better than any tween.
+        if (expanded) {
             Column {
                 content()
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
