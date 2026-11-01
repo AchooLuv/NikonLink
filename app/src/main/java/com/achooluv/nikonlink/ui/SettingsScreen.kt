@@ -288,7 +288,7 @@ private fun SettingsHome(
             Spacer(Modifier.height(6.dp))
             Text("设置", color = Paper, fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(3.dp))
-            Text("只保留必要选项", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
+            Text("改动立即生效，无需保存", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
         }
 
         Column(
