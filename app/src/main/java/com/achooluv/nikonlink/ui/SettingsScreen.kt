@@ -9,7 +9,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -99,18 +98,15 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     val updates = remember { UpdateManager.get(context) }
     val updateState by updates.state.collectAsStateWithLifecycle()
     var showUpdate by remember { mutableStateOf(false) }
-    var installLaunchedFor by remember { mutableStateOf<String?>(null) }
 
     // Quiet check once per session; tapping the version row forces a new request.
     LaunchedEffect(Unit) { updates.check(versionName) }
 
     // The moment the APK lands, hand it to the system installer (user still confirms).
-    LaunchedEffect(updateState) {
-        val ready = updateState as? UpdateManager.State.Ready ?: return@LaunchedEffect
-        if (installLaunchedFor != ready.file.absolutePath) {
-            installLaunchedFor = ready.file.absolutePath
-            updates.install(context, ready.file)
-        }
+    // Keyed on the file, not the whole state, so download progress does not restart it.
+    val readyFile = (updateState as? UpdateManager.State.Ready)?.file
+    LaunchedEffect(readyFile) {
+        if (readyFile != null) updates.installPending(context)
     }
 
     // Coming back from "install unknown apps" settings: continue the download.
@@ -550,6 +546,9 @@ private fun UpdateDialog(
         is UpdateManager.State.NeedsPermission -> state.info
         else -> return
     }
+    // Parsing the release body is pure but not free; do it once per version, not on
+    // every progress tick.
+    val notes = remember(info.versionName) { UpdateChecker.readableNotes(info.notes) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -579,7 +578,7 @@ private fun UpdateDialog(
             LazyColumn(Modifier.heightIn(max = 200.dp)) {
                 item {
                     Text(
-                        UpdateChecker.readableNotes(info.notes).ifBlank { "该版本没有填写更新说明。" },
+                        notes.ifBlank { "该版本没有填写更新说明。" },
                         color = Paper,
                         fontSize = 12.sp,
                         lineHeight = 18.sp,

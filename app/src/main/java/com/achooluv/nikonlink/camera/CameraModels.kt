@@ -46,7 +46,6 @@ data class CameraFile(
 /** Capability knobs that vary by body. */
 data class CameraProfile(
     val supportsPartialObject: Boolean,
-    val chunkSize: Int,
     val supportsLargeThumb: Boolean,
 ) {
     companion object {
@@ -55,7 +54,6 @@ data class CameraProfile(
             val m = model.uppercase(Locale.US)
             return CameraProfile(
                 supportsPartialObject = true,
-                chunkSize = 4 * 1024 * 1024,
                 supportsLargeThumb = m.contains("Z") || m.contains("D"),
             )
         }

@@ -42,9 +42,12 @@ class UpdateManager private constructor(private val app: Context) {
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state
 
-    private var checkJob: Job? = null
     private var downloadJob: Job? = null
     private val checking = AtomicBoolean(false)
+
+    /** Guards against re-opening the system installer every time Settings recomposes. */
+    @Volatile
+    private var installOpened = false
 
     /** Checks once per app session; a manual tap forces a fresh request. */
     fun check(currentVersion: String, force: Boolean = false) {
@@ -55,7 +58,7 @@ class UpdateManager private constructor(private val app: Context) {
             }
         }
         if (!checking.compareAndSet(false, true)) return
-        checkJob = scope.launch {
+        scope.launch {
             if (force) _state.value = State.Checking
             val found = runCatching { UpdateChecker.latest(currentVersion) }.getOrNull()
             _state.value = if (found != null) State.Available(found) else State.Idle
@@ -79,6 +82,7 @@ class UpdateManager private constructor(private val app: Context) {
         downloadJob = scope.launch {
             _state.value = State.Downloading(info, 0)
             val target = File(updateDir(app), "nikonlink-${info.versionName}.apk")
+            pruneOtherApks(target)
             val ok = runCatching { fetch(info, target) }
                 .onFailure { _state.value = State.Failed(info, human(it)) }
                 .isSuccess
@@ -88,8 +92,19 @@ class UpdateManager private constructor(private val app: Context) {
                 _state.value = State.Failed(info, "安装包校验失败，请重试")
                 return@launch
             }
+            installOpened = false
             _state.value = State.Ready(info, target)
         }
+    }
+
+    /**
+     * Opens the system installer for a finished download exactly once per APK, so
+     * switching tabs or rotating does not re-launch it.
+     */
+    fun installPending(context: Context) {
+        val ready = _state.value as? State.Ready ?: return
+        if (installOpened) return
+        installOpened = install(context, ready.file)
     }
 
     fun cancelDownload() {
@@ -158,14 +173,23 @@ class UpdateManager private constructor(private val app: Context) {
                         val now = System.currentTimeMillis()
                         if (now - lastEmit > 120 || written == total) {
                             lastEmit = now
-                            val bytes = written
-                            scope.launch { _state.value = State.Downloading(info, bytes) }
+                            // MutableStateFlow is thread-safe; no coroutine per tick.
+                            _state.value = State.Downloading(info, written)
                         }
                     }
                 }
             }
         } finally {
             conn.disconnect()
+        }
+    }
+
+    /** Keeps only the APK being downloaded; older versions would pile up in cache. */
+    private fun pruneOtherApks(keep: File) {
+        runCatching {
+            updateDir(app).listFiles()?.forEach { file ->
+                if (file != keep) file.delete()
+            }
         }
     }
 

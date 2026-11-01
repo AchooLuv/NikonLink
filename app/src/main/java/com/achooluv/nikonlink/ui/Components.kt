@@ -66,7 +66,7 @@ fun Caption(text: String, color: Color = NikonLinkTheme.colors.dim) {
 }
 
 @Composable
-fun SectionTitle(text: String, trailing: (@Composable () -> Unit)? = null) {
+fun SectionTitle(text: String) {
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -79,7 +79,6 @@ fun SectionTitle(text: String, trailing: (@Composable () -> Unit)? = null) {
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 1.2.sp,
         )
-        trailing?.invoke()
     }
 }
 

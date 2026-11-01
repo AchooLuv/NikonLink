@@ -8,7 +8,6 @@ import java.net.URL
 
 /** A newer release published on GitHub. */
 data class UpdateInfo(
-    val tag: String,
     val versionName: String,
     val notes: String,
     val apkUrl: String,
@@ -75,7 +74,6 @@ object UpdateChecker {
         if (apkUrl == null) return@withContext null
 
         UpdateInfo(
-            tag = tag,
             versionName = version,
             notes = json.optString("body").trim(),
             apkUrl = apkUrl,
