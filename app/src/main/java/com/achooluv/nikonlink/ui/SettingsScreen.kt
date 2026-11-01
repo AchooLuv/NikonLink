@@ -17,18 +17,27 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,10 +50,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.achooluv.nikonlink.BuildConfig
 import com.achooluv.nikonlink.NikonLinkRepository
+import com.achooluv.nikonlink.camera.formatBytes
 import com.achooluv.nikonlink.data.SettingsStore
+import com.achooluv.nikonlink.update.UpdateChecker
+import com.achooluv.nikonlink.update.UpdateInfo
+import com.achooluv.nikonlink.update.UpdateManager
 
 @Composable
 fun SettingsScreen(repo: NikonLinkRepository) {
@@ -60,6 +78,38 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     var confirmClear by remember { mutableStateOf(false) }
     var confirmReset by remember { mutableStateOf(false) }
+
+    val versionName = BuildConfig.VERSION_NAME
+    val updates = remember { UpdateManager.get(context) }
+    val updateState by updates.state.collectAsStateWithLifecycle()
+    var showUpdate by remember { mutableStateOf(false) }
+    var installLaunchedFor by remember { mutableStateOf<String?>(null) }
+
+    // Quiet check once per session; tapping the version row forces a new request.
+    LaunchedEffect(Unit) { updates.check(versionName) }
+
+    // The moment the APK lands, hand it to the system installer (user still confirms).
+    LaunchedEffect(updateState) {
+        val ready = updateState as? UpdateManager.State.Ready ?: return@LaunchedEffect
+        if (installLaunchedFor != ready.file.absolutePath) {
+            installLaunchedFor = ready.file.absolutePath
+            updates.install(context, ready.file)
+        }
+    }
+
+    // Coming back from "install unknown apps" settings: continue the download.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME &&
+                updates.state.value is UpdateManager.State.NeedsPermission
+            ) {
+                updates.download(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 20.dp)) {
@@ -261,9 +311,29 @@ fun SettingsScreen(repo: NikonLinkRepository) {
         SectionTitle("关于")
         Spacer(Modifier.height(10.dp))
         NikonCard {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text("NikonLink", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Mono("v${BuildConfig.VERSION_NAME}", color = PaperDim, size = 12)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Mono(
+                        "v$versionName",
+                        color = PaperDim,
+                        size = 12,
+                    )
+                    UpdateBadge(
+                        state = updateState,
+                        onClick = {
+                            if (updateState is UpdateManager.State.Idle) {
+                                updates.check(versionName, force = true)
+                            } else {
+                                showUpdate = true
+                            }
+                        },
+                    )
+                }
             }
             Spacer(Modifier.height(6.dp))
             Text(
@@ -297,6 +367,21 @@ fun SettingsScreen(repo: NikonLinkRepository) {
         }
     }
 
+    if (showUpdate && updateState !is UpdateManager.State.Idle) {
+        UpdateDialog(
+            currentVersion = versionName,
+            state = updateState,
+            onDismiss = { showUpdate = false },
+            onStartDownload = { updates.download(context) },
+            onCancelDownload = { updates.cancelDownload() },
+            onInstallReady = {
+                val ready = updateState as? UpdateManager.State.Ready
+                if (ready != null) updates.install(context, ready.file)
+            },
+            onGrantPermission = { updates.openInstallPermission(context) },
+            onOpenReleases = { updates.openReleasesPage(context) },
+        )
+    }
     if (confirmReset) {
         AlertDialog(
             onDismissRequest = { confirmReset = false },
@@ -368,4 +453,181 @@ private fun SettingSwitch(
             ),
         )
     }
+}
+
+/** Version pill: solid when a new release is waiting, tinted while downloading. */
+@Composable
+private fun UpdateBadge(state: UpdateManager.State, onClick: () -> Unit) {
+    val (label, bg, fg) = when (state) {
+        is UpdateManager.State.Available ->
+            Triple("有新版本 v${state.info.versionName}", NikonYellow, Color(0xFF161200))
+        is UpdateManager.State.Downloading ->
+            Triple("下载中 ${"%.0f".format(downloadFraction(state) * 100)}%", NikonYellow.copy(alpha = 0.16f), NikonYellow)
+        is UpdateManager.State.Ready -> Triple("待安装", Mint.copy(alpha = 0.16f), Mint)
+        is UpdateManager.State.NeedsPermission -> Triple("需授权", Ember.copy(alpha = 0.16f), Ember)
+        is UpdateManager.State.Failed -> Triple("下载失败", Ember.copy(alpha = 0.16f), Ember)
+        else -> return
+    }
+    Spacer(Modifier.width(8.dp))
+    Text(
+        label,
+        color = fg,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+@Composable
+private fun UpdateDialog(
+    currentVersion: String,
+    state: UpdateManager.State,
+    onDismiss: () -> Unit,
+    onStartDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onInstallReady: () -> Unit,
+    onGrantPermission: () -> Unit,
+    onOpenReleases: () -> Unit,
+) {
+    val info: UpdateInfo = when (state) {
+        is UpdateManager.State.Available -> state.info
+        is UpdateManager.State.Downloading -> state.info
+        is UpdateManager.State.Ready -> state.info
+        is UpdateManager.State.Failed -> state.info ?: return
+        is UpdateManager.State.NeedsPermission -> state.info
+        else -> return
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 400.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(InkRaised)
+                .padding(20.dp),
+        ) {
+            Text("版本更新", color = Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Mono("v$currentVersion", color = PaperDim, size = 13)
+                Text("  →  ", color = PaperDim, fontSize = 13.sp)
+                Mono("v${info.versionName}", color = NikonYellow, size = 13)
+            }
+
+            Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = NikonLinkTheme.colors.line)
+            Spacer(Modifier.height(12.dp))
+            Text("更新内容", color = PaperDim, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            LazyColumn(Modifier.heightIn(max = 200.dp)) {
+                item {
+                    Text(
+                        UpdateChecker.readableNotes(info.notes).ifBlank { "该版本没有填写更新说明。" },
+                        color = Paper,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = NikonLinkTheme.colors.line)
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    if (info.sizeBytes > 0) "安装包 ${formatBytes(info.sizeBytes)}" else "安装包",
+                    color = PaperDim,
+                    fontSize = 11.sp,
+                )
+                Text(progressLabel(state), color = PaperDim, fontSize = 11.sp)
+            }
+            Spacer(Modifier.height(8.dp))
+            // Hand-drawn bar: M3's indicator paints a stop dot even at 0%, which
+            // reads as a stray dot on the "waiting to download" state.
+            val fraction = if (state is UpdateManager.State.Ready) 1f else downloadFraction(state)
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(InkLine),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                        .height(4.dp)
+                        .background(if (state is UpdateManager.State.Failed) Ember else NikonYellow),
+                )
+            }
+
+            val note = when (state) {
+                is UpdateManager.State.Failed -> state.message
+                is UpdateManager.State.NeedsPermission -> "需要在系统设置里允许「NikonLink」安装应用，返回后会自动继续"
+                else -> null
+            }
+            if (note != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(note, color = Ember, fontSize = 11.sp, lineHeight = 16.sp)
+            }
+
+            Spacer(Modifier.height(14.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val secondary = when (state) {
+                    is UpdateManager.State.Downloading -> "取消下载" to onCancelDownload
+                    is UpdateManager.State.Failed -> "打开发布页" to onOpenReleases
+                    else -> "取消" to onDismiss
+                }
+                TextButton(onClick = secondary.second) {
+                    Text(secondary.first, color = PaperDim, fontSize = 13.sp)
+                }
+                Spacer(Modifier.width(4.dp))
+                val primary = when (state) {
+                    is UpdateManager.State.Available -> "更新并安装" to onStartDownload
+                    is UpdateManager.State.Downloading -> "后台下载" to onDismiss
+                    is UpdateManager.State.Ready -> "安装" to onInstallReady
+                    is UpdateManager.State.Failed -> "重试" to onStartDownload
+                    is UpdateManager.State.NeedsPermission -> "去设置" to onGrantPermission
+                    else -> "关闭" to onDismiss
+                }
+                Button(
+                    onClick = primary.second,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = NikonYellow,
+                        contentColor = Color(0xFF161200),
+                    ),
+                ) {
+                    Text(primary.first, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+private fun downloadFraction(state: UpdateManager.State): Float {
+    val downloading = state as? UpdateManager.State.Downloading ?: return 0f
+    val total = downloading.info.sizeBytes
+    if (total <= 0) return 0f
+    return (downloading.bytes.toFloat() / total).coerceIn(0f, 1f)
+}
+
+private fun progressLabel(state: UpdateManager.State): String = when (state) {
+    is UpdateManager.State.Available -> "等待下载"
+    is UpdateManager.State.Downloading -> "已下载 ${formatBytes(state.bytes)}"
+    is UpdateManager.State.Ready -> "下载完成"
+    is UpdateManager.State.Failed -> "下载失败"
+    is UpdateManager.State.NeedsPermission -> "等待授权"
+    else -> ""
 }
