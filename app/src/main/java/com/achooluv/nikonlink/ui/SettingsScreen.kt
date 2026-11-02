@@ -171,6 +171,7 @@ fun SettingsScreen(repo: NikonLinkRepository) {
                     }
                 },
                 onOpenRepo = { openUrl(context, "https://github.com/AchooLuv/NikonLink") },
+                onOpenBlog = { openUrl(context, "https://my.muri.life") },
             )
         } else {
             SettingsDetail(
@@ -282,6 +283,7 @@ private fun SettingsHome(
     onOpen: (SettingsPage) -> Unit,
     onVersionClick: () -> Unit,
     onOpenRepo: () -> Unit,
+    onOpenBlog: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 20.dp)) {
@@ -327,7 +329,13 @@ private fun SettingsHome(
             Spacer(Modifier.height(24.dp))
             SectionTitle("关于")
             Spacer(Modifier.height(10.dp))
-            AboutCard(versionName = versionName, updateState = updateState, onVersionClick = onVersionClick, onOpenRepo = onOpenRepo)
+            AboutCard(
+                versionName = versionName,
+                updateState = updateState,
+                onVersionClick = onVersionClick,
+                onOpenRepo = onOpenRepo,
+                onOpenBlog = onOpenBlog,
+            )
             Spacer(Modifier.height(40.dp))
         }
     }
@@ -583,6 +591,7 @@ private fun AboutCard(
     updateState: UpdateManager.State,
     onVersionClick: () -> Unit,
     onOpenRepo: () -> Unit,
+    onOpenBlog: () -> Unit,
 ) {
     NikonCard {
         Row(
@@ -597,7 +606,7 @@ private fun AboutCard(
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text("尼康 Z 系列无线图传 · PTP/IP 直连 · 仅 arm64", color = PaperDim, fontSize = 12.sp)
+        Text("尼康 Z 系列无线图传 · PTP/IP 直连", color = PaperDim, fontSize = 12.sp)
         Spacer(Modifier.height(14.dp))
         Text(
             "github.com/AchooLuv/NikonLink",
@@ -605,6 +614,16 @@ private fun AboutCard(
             fontSize = 12.sp,
             modifier = Modifier.clickable(onClick = onOpenRepo),
         )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("作者博客 ", color = PaperDim, fontSize = 12.sp)
+            Text(
+                "my.muri.life",
+                color = NikonYellow,
+                fontSize = 12.sp,
+                modifier = Modifier.clickable(onClick = onOpenBlog),
+            )
+        }
         Spacer(Modifier.height(10.dp))
         Text(
             "协议实现参考了开源项目 AeroShutter（MIT）对 PTP/IP 与 Nikon 厂商操作的逆向成果。",
