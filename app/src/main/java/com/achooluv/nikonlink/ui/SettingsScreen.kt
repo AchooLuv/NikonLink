@@ -35,6 +35,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -613,20 +614,13 @@ private fun AboutCard(
         AboutLink(label = "项目主页", value = "github.com/AchooLuv/NikonLink", onClick = onOpenRepo)
         Spacer(Modifier.height(4.dp))
         AboutLink(label = "作者博客", value = "my.muri.life", onClick = onOpenBlog)
-
-        Spacer(Modifier.height(16.dp))
-        HorizontalDivider(color = NikonLinkTheme.colors.line)
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "PTP/IP 实现参考 AeroShutter（MIT）的逆向成果。",
-            color = PaperDim.copy(alpha = 0.7f),
-            fontSize = 10.5.sp,
-            lineHeight = 15.sp,
-        )
     }
 }
 
-/** Label + value + chevron: both about links share one visual pattern. */
+/**
+ * Label + value + "opens externally" icon. The chevron is deliberately avoided: in
+ * this app it means "drills into a sub-page", while these open a browser.
+ */
 @Composable
 private fun AboutLink(label: String, value: String, onClick: () -> Unit) {
     Row(
@@ -652,10 +646,10 @@ private fun AboutLink(label: String, value: String, onClick: () -> Unit) {
             modifier = Modifier.weight(1f),
         )
         Icon(
-            Icons.Rounded.ChevronRight,
-            contentDescription = null,
+            Icons.Rounded.OpenInNew,
+            contentDescription = "在浏览器打开",
             tint = PaperDim,
-            modifier = Modifier.size(16.dp),
+            modifier = Modifier.size(15.dp),
         )
     }
 }
