@@ -612,7 +612,6 @@ private fun AboutCard(
 
         Spacer(Modifier.height(16.dp))
         AboutLink(label = "项目主页", value = "github.com/AchooLuv/NikonLink", onClick = onOpenRepo)
-        Spacer(Modifier.height(4.dp))
         AboutLink(label = "作者博客", value = "my.muri.life", onClick = onOpenBlog)
     }
 }
@@ -628,7 +627,7 @@ private fun AboutLink(label: String, value: String, onClick: () -> Unit) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
