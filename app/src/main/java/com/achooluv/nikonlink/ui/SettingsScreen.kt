@@ -63,6 +63,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -599,7 +600,7 @@ private fun AboutCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("NikonLink", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("NikonLink", color = Paper, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Mono("v$versionName", color = PaperDim, size = 12)
                 UpdateBadge(state = updateState, onClick = onVersionClick)
@@ -607,29 +608,54 @@ private fun AboutCard(
         }
         Spacer(Modifier.height(6.dp))
         Text("尼康 Z 系列无线图传 · PTP/IP 直连", color = PaperDim, fontSize = 12.sp)
-        Spacer(Modifier.height(14.dp))
+
+        Spacer(Modifier.height(16.dp))
+        AboutLink(label = "项目主页", value = "github.com/AchooLuv/NikonLink", onClick = onOpenRepo)
+        Spacer(Modifier.height(4.dp))
+        AboutLink(label = "作者博客", value = "my.muri.life", onClick = onOpenBlog)
+
+        Spacer(Modifier.height(16.dp))
+        HorizontalDivider(color = NikonLinkTheme.colors.line)
+        Spacer(Modifier.height(12.dp))
         Text(
-            "github.com/AchooLuv/NikonLink",
-            color = NikonYellow,
-            fontSize = 12.sp,
-            modifier = Modifier.clickable(onClick = onOpenRepo),
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("作者博客 ", color = PaperDim, fontSize = 12.sp)
-            Text(
-                "my.muri.life",
-                color = NikonYellow,
-                fontSize = 12.sp,
-                modifier = Modifier.clickable(onClick = onOpenBlog),
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "协议实现参考了开源项目 AeroShutter（MIT）对 PTP/IP 与 Nikon 厂商操作的逆向成果。",
-            color = PaperDim.copy(alpha = 0.75f),
+            "PTP/IP 实现参考 AeroShutter（MIT）的逆向成果。",
+            color = PaperDim.copy(alpha = 0.7f),
             fontSize = 10.5.sp,
             lineHeight = 15.sp,
+        )
+    }
+}
+
+/** Label + value + chevron: both about links share one visual pattern. */
+@Composable
+private fun AboutLink(label: String, value: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            color = PaperDim,
+            fontSize = 12.sp,
+            modifier = Modifier.width(64.dp),
+        )
+        Text(
+            value,
+            color = NikonYellow,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            Icons.Rounded.ChevronRight,
+            contentDescription = null,
+            tint = PaperDim,
+            modifier = Modifier.size(16.dp),
         )
     }
 }
