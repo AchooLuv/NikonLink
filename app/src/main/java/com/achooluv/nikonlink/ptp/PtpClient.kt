@@ -21,6 +21,10 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     private companion object {
         /** Camera firmware drops connections that talk immediately after SYN-ACK. */
         const val POST_CONNECT_DELAY_MS = 350L
+
+        /** Parameters for [Ptp.OP_NIKON_PAIRING_MODE]. */
+        const val PAIRING_MODE_ENTER = 9
+        const val PAIRING_MODE_LEAVE = 13
     }
 
     /** Fixed initiator GUID that Nikon's own app announces, so the body treats us as a known host. */
@@ -380,6 +384,37 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
             Ptp.OP_NIKON_SET_TRANSFER_LIST_LOCK,
             intArrayOf(if (lock) 3 else 0),
         )
+    }
+
+    /**
+     * Registers this client as a smart device on the camera, the same way SnapBridge
+     * does: enter pairing mode, read the one-time code, accept, leave the mode.
+     * The camera asks the user to confirm on its screen.
+     *
+     * @return the pairing code, or an empty string when the body did not return one.
+     */
+    fun pairAsSmartDevice(): String {
+        transaction(Ptp.OP_NIKON_PAIRING_MODE, intArrayOf(PAIRING_MODE_ENTER))
+        val code = runCatching { readPairingCode() }.getOrDefault("")
+        transaction(Ptp.OP_NIKON_COMPLETE_PAIRING, intArrayOf(Ptp.RESP_OK))
+        runCatching { transaction(Ptp.OP_NIKON_PAIRING_MODE, intArrayOf(PAIRING_MODE_LEAVE)) }
+        return code
+    }
+
+    /**
+     * The body wraps the code in a 16-byte header followed by a u32 digit count and
+     * that many single-byte digits (e.g. 1,4,7,2 -> "1472").
+     */
+    private fun readPairingCode(): String {
+        val data = collect(Ptp.OP_NIKON_GET_PAIRING_CODE, IntArray(0))
+        if (data.size < 24) return ""
+        val count = (data[16].toInt() and 0xFF) or ((data[17].toInt() and 0xFF) shl 8)
+        if (count !in 1..8) return ""
+        val start = 20
+        if (data.size < start + count) return ""
+        val digits = (0 until count).map { data[start + it].toInt() and 0xFF }
+        if (digits.any { it > 9 }) return ""
+        return digits.joinToString("")
     }
 
     /**

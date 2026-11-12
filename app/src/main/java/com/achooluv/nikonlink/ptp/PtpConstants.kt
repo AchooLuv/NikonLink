@@ -49,6 +49,19 @@ object Ptp {
     /** Nikon vendor op: read the "send to smart device" handle list. */
     const val OP_NIKON_GET_TRANSFER_LIST = 0x9408
 
+    /**
+     * Nikon vendor op: enter (param 9) or leave (param 13) the SnapBridge-style
+     * smart-device pairing mode. While in this mode the camera asks the user to
+     * confirm the new device.
+     */
+    const val OP_NIKON_PAIRING_MODE = 0x9439
+
+    /** Nikon vendor op: returns the one-time pairing code shown to the device. */
+    const val OP_NIKON_GET_PAIRING_CODE = 0x952B
+
+    /** Nikon vendor op: finish pairing (param 0x2001 accept, 0x2002 reject). */
+    const val OP_NIKON_COMPLETE_PAIRING = 0x935A
+
     // ---- Response codes ------------------------------------------------------
     const val RESP_OK = 0x2001
     const val RESP_GENERAL_ERROR = 0x2002

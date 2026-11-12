@@ -98,6 +98,8 @@ fun SettingsScreen(repo: NikonLinkRepository) {
     val keepAliveSeconds by settings.keepAliveSeconds.collectAsStateWithLifecycle()
     val rawThumbs by settings.showRawThumbnails.collectAsStateWithLifecycle()
     val pairJpeg by settings.pairJpeg.collectAsStateWithLifecycle()
+    val pairing by repo.pairing.collectAsStateWithLifecycle()
+    val pairingNote by repo.pairingNote.collectAsStateWithLifecycle()
     val chunk by settings.chunkSize.collectAsStateWithLifecycle()
     val eventsSupported by repo.eventsSupported.collectAsStateWithLifecycle()
 
@@ -198,6 +200,10 @@ fun SettingsScreen(repo: NikonLinkRepository) {
                 },
                 onRawThumbs = { settings.setShowRawThumbnails(it) },
                 onPairJpeg = { settings.setPairJpeg(it) },
+                pairing = pairing,
+                pairingNote = pairingNote,
+                onPairCamera = { repo.pairCamera() },
+                onClearPairingNote = { repo.clearPairingNote() },
                 onClearRecords = { confirmClear = true },
                 onResetAll = { confirmReset = true },
                 onCopyDiagnostics = {
@@ -360,6 +366,10 @@ private fun SettingsDetail(
     onKeepAliveSeconds: (Int) -> Unit,
     onRawThumbs: (Boolean) -> Unit,
     onPairJpeg: (Boolean) -> Unit,
+    pairing: NikonLinkRepository.PairingState,
+    pairingNote: String?,
+    onPairCamera: () -> Unit,
+    onClearPairingNote: () -> Unit,
     onClearRecords: () -> Unit,
     onResetAll: () -> Unit,
     onCopyDiagnostics: () -> Unit,
@@ -400,6 +410,10 @@ private fun SettingsDetail(
                     onKeepAliveSeconds = onKeepAliveSeconds,
                     onRawThumbs = onRawThumbs,
                     onPairJpeg = onPairJpeg,
+                    pairing = pairing,
+                    pairingNote = pairingNote,
+                    onPairCamera = onPairCamera,
+                    onClearPairingNote = onClearPairingNote,
                 )
                 SettingsPage.STORAGE -> StoragePanel(
                     onClearRecords = onClearRecords,
@@ -488,6 +502,10 @@ private fun ConnectionPanel(
     onKeepAliveSeconds: (Int) -> Unit,
     onRawThumbs: (Boolean) -> Unit,
     onPairJpeg: (Boolean) -> Unit,
+    pairing: NikonLinkRepository.PairingState,
+    pairingNote: String?,
+    onPairCamera: () -> Unit,
+    onClearPairingNote: () -> Unit,
 ) {
     NikonCard {
         SettingSwitch(
@@ -542,6 +560,69 @@ private fun ConnectionPanel(
             subtitle = "选中 DSC_0001.NEF 时，如果卡里有同名的 DSC_0001.JPG 就一起下载，方便直接预览与分享。",
             checked = pairJpeg,
             onCheckedChange = onPairJpeg,
+        )
+        HorizontalDivider(
+            color = NikonLinkTheme.colors.line,
+            modifier = Modifier.padding(vertical = 16.dp),
+        )
+        PairingSection(pairing = pairing, note = pairingNote, onPair = onPairCamera, onClear = onClearPairingNote)
+    }
+}
+
+/**
+ * One-time smart-device registration: the camera then keeps the Wi-Fi profile,
+ * stops showing its connection wizard and reconnects with a single tap.
+ */
+@Composable
+private fun PairingSection(
+    pairing: NikonLinkRepository.PairingState,
+    note: String?,
+    onPair: () -> Unit,
+    onClear: () -> Unit,
+) {
+    val running = pairing == NikonLinkRepository.PairingState.Running
+    Text("配对相机", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "相机停在「连接向导」或每次都要重走连接流程时，先连上相机再点这里。" +
+            "配对后相机会记住本机并保存网络，之后直接连接即可。",
+        color = PaperDim,
+        fontSize = 11.sp,
+        lineHeight = 16.sp,
+    )
+    Spacer(Modifier.height(10.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (running) "正在配对…" else "开始配对",
+            color = if (running) PaperDim else NikonYellow,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(enabled = !running, onClick = onPair)
+                .padding(vertical = 6.dp, horizontal = 2.dp),
+        )
+        if (pairing == NikonLinkRepository.PairingState.Done) {
+            Spacer(Modifier.width(12.dp))
+            Text(
+                "完成",
+                color = Mint,
+                fontSize = 12.sp,
+                modifier = Modifier.clickable(onClick = onClear),
+            )
+        }
+    }
+    if (!note.isNullOrBlank()) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            note,
+            color = when (pairing) {
+                NikonLinkRepository.PairingState.Failed -> Ember
+                NikonLinkRepository.PairingState.Done -> Mint
+                else -> PaperDim
+            },
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
         )
     }
 }

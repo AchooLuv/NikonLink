@@ -68,7 +68,9 @@ class NikonLinkRepository private constructor(private val app: Application) {
     val settings = SettingsStore(app)
     val wifi = CameraWifi(app)
     private val downloader = Downloader(app, settings)
-    private val client = PtpIpClient("NikonLink/${BuildConfig.VERSION_NAME} (Android)")
+    // Stable identity: the camera remembers the pairing by this name, so it must not
+    // change between versions (the version used to be part of it).
+    private val client = PtpIpClient("NikonLink (Android)")
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -119,6 +121,54 @@ class NikonLinkRepository private constructor(private val app: Application) {
 
     private val thumbMutex = Mutex()
     private val downloadMutex = Mutex()
+    private val pairingMutex = Mutex()
+
+    /** Progress of the smart-device pairing (SnapBridge-compatible registration). */
+    enum class PairingState { Idle, Running, Done, Failed }
+
+    private val _pairing = MutableStateFlow(PairingState.Idle)
+    val pairing: StateFlow<PairingState> = _pairing
+
+    private val _pairingNote = MutableStateFlow<String?>(null)
+    val pairingNote: StateFlow<String?> = _pairingNote
+
+    /**
+     * Registers this phone on the camera the way SnapBridge does, so the body keeps
+     * the network profile and stops showing its connection wizard. The camera must
+     * be sitting on the pairing screen; the user confirms on the body.
+     */
+    fun pairCamera() {
+        if (_state.value !is ConnState.Connected) {
+            _pairing.value = PairingState.Failed
+            _pairingNote.value = "先在连接页连上相机，再执行配对"
+            return
+        }
+        scope.launch {
+            pairingMutex.withLock {
+                _pairing.value = PairingState.Running
+                _pairingNote.value = "正在配对，若相机弹出确认请按 OK…"
+                try {
+                    val code = client.pairAsSmartDevice()
+                    _pairing.value = PairingState.Done
+                    _pairingNote.value = if (code.isNotBlank()) {
+                        "配对完成（配对码 $code），相机应已显示已连接"
+                    } else {
+                        "配对完成，相机应已显示已连接"
+                    }
+                    Diagnostics.log("配对完成，配对码=$code")
+                } catch (e: Exception) {
+                    _pairing.value = PairingState.Failed
+                    _pairingNote.value = "配对失败：${humanError(e)}"
+                    Diagnostics.log("配对失败：${humanError(e)}")
+                }
+            }
+        }
+    }
+
+    fun clearPairingNote() {
+        _pairing.value = PairingState.Idle
+        _pairingNote.value = null
+    }
 
     private var thumbLargeUnsupported = false
     private var extrasLoaded = false
