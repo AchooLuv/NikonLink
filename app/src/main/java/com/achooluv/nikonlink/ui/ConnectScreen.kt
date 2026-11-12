@@ -262,7 +262,7 @@ fun ConnectScreen(
                     HorizontalDivider(color = NikonLinkTheme.colors.line)
                     Spacer(Modifier.height(14.dp))
                     InfoRow("固件", id.firmware.ifBlank { "—" })
-                    InfoRow("序列号", id.serial.ifBlank { "—" })
+                    InfoRow("序列号", serialLabel(id.serial))
                     extras?.lens?.let { InfoRow("镜头", it) }
                     extras?.exposure?.let { InfoRow("光圈/焦距", it) }
                     extras?.shutterCount?.let { InfoRow("快门数", "%,d".format(it)) }
@@ -369,6 +369,17 @@ private fun InfoRow(label: String, value: String) {
         Text(label, color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
         Mono(value, color = Paper, size = 12)
     }
+}
+
+/**
+ * Nikon pads the serial with a long run of zeros over PTP; only the tail is the
+ * actual number, so drop the padding instead of showing 26 characters.
+ */
+internal fun serialLabel(raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return "—"
+    val stripped = trimmed.trimStart('0')
+    return stripped.ifEmpty { "—" }
 }
 
 @Composable
