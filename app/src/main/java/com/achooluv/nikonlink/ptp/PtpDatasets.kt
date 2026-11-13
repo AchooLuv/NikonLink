@@ -196,6 +196,23 @@ internal object Datasets {
     }
 }
 
+/**
+ * Decodes the payload of Nikon's GetPtpipPairingCode (0x952B).
+ *
+ * The body wraps the code in a 16-byte header, followed by a u32 digit count and
+ * that many single-byte digits — e.g. `1, 4, 7, 2` becomes "1472".
+ */
+internal fun parsePairingCode(data: ByteArray): String {
+    if (data.size < 24) return ""
+    val count = (data[16].toInt() and 0xFF) or ((data[17].toInt() and 0xFF) shl 8)
+    if (count !in 1..8) return ""
+    val start = 20
+    if (data.size < start + count) return ""
+    val digits = (0 until count).map { data[start + it].toInt() and 0xFF }
+    if (digits.any { it > 9 }) return ""
+    return digits.joinToString("")
+}
+
 private val PTP_DATE = Regex("""^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})""")
 
 /** Parses "YYYYMMDDThhmmss" as local time. */

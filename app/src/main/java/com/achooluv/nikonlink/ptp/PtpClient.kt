@@ -401,21 +401,8 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         return code
     }
 
-    /**
-     * The body wraps the code in a 16-byte header followed by a u32 digit count and
-     * that many single-byte digits (e.g. 1,4,7,2 -> "1472").
-     */
-    private fun readPairingCode(): String {
-        val data = collect(Ptp.OP_NIKON_GET_PAIRING_CODE, IntArray(0))
-        if (data.size < 24) return ""
-        val count = (data[16].toInt() and 0xFF) or ((data[17].toInt() and 0xFF) shl 8)
-        if (count !in 1..8) return ""
-        val start = 20
-        if (data.size < start + count) return ""
-        val digits = (0 until count).map { data[start + it].toInt() and 0xFF }
-        if (digits.any { it > 9 }) return ""
-        return digits.joinToString("")
-    }
+    private fun readPairingCode(): String =
+        parsePairingCode(collect(Ptp.OP_NIKON_GET_PAIRING_CODE, IntArray(0)))
 
     /**
      * Streams [length] bytes of object [handle] starting at [offset] into [sink].

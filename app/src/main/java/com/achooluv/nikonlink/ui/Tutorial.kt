@@ -2,7 +2,6 @@ package com.achooluv.nikonlink.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -54,14 +53,15 @@ val tutorialSectionsAp = listOf(
             TutorialStep(
                 1,
                 "在相机上打开 Wi-Fi",
-                "Z50II：按 MENU → 网络菜单 → 连接至智能设备 → Wi-Fi 连接 → 建立连接。\n" +
-                    "其它 Z 机型：设定菜单 → 连接至智能设备 → Wi-Fi 连接。\n" +
-                    "D 系列：设定菜单 → Wi-Fi → 网络连接 → 启用。",
+                "Z50II：MENU → 网络菜单 → 连接至智能设备 → Wi-Fi连接（AP mode）→ 建立Wi-Fi连接。\n" +
+                    "Z8 / Z9：MENU → 网络菜单 → 连接至智能设备 → Wi-Fi连接。\n" +
+                    "Z6 / Z7 系列：设定菜单 → 连接至智能设备 → Wi-Fi连接。\n" +
+                    "D 系列：设定菜单 → Wi-Fi（部分机型叫「网络连接」）→ 建立连接 / 启用。",
             ),
             TutorialStep(
                 2,
                 "记下屏幕上的 SSID 与密码",
-                "相机屏幕会显示网络名和 8 位密码，网络名一般以 NIKON_ 开头，例如：",
+                "相机屏幕会显示网络名和密码（默认 8 位数字）。网络名一般以 NIKON 开头，不同固件格式略有差异，例如：",
                 code = "NIKON_Z50II_12345678 / 12345678",
             ),
             TutorialStep(
@@ -94,12 +94,12 @@ val tutorialSectionsAp = listOf(
             TutorialStep(
                 3,
                 "让相机别睡着",
-                "设定菜单 → 自动关机时间 → 选择 10 分钟或更长；拍摄间隔较长时可在相机上按一下快门唤醒。",
+                "在相机设定菜单里把「自动关机时间」调长（10 分钟以上）；拍摄间隔较长时，可在相机上按一下快门唤醒。",
             ),
             TutorialStep(
                 4,
                 "距离与遮挡",
-                "手机与相机保持 1–3 米、尽量避免金属和人体遮挡；相机天线一般在机身左侧（镜头朝向自己时的右侧）。",
+                "手机与相机保持 1–3 米，中间尽量不要隔金属、墙体或人体；放得越近越稳定。",
             ),
         ),
     ),
@@ -122,15 +122,16 @@ val tutorialSectionsSta = listOf(
             TutorialStep(
                 1,
                 "让相机加入路由器",
-                "Z50II / Z8 / Z9：MENU → 网络菜单 → 连接至智能设备 → Wi-Fi 连接（STA 模式）→ 建立配置。\n" +
-                    "给配置起个名字 → 搜索 Wi-Fi 网络 → 选家里的路由器 SSID → 输入 Wi-Fi 密码。\n" +
-                    "IP 地址选「自动获取」即可（路由器没开 DHCP 时才需要手动填）。",
+                "Z50II：MENU → 网络菜单 → 连接至智能设备 → Wi-Fi连接（STA mode）→ 创建配置文件。\n" +
+                    "Z8 / Z9：同样是「网络菜单 → 连接至智能设备 → Wi-Fi连接（STA mode）」。\n" +
+                    "给配置文件起个名字 → 搜索 Wi-Fi 网络 → 选家里的路由器 → 输入 Wi-Fi 密码 → TCP/IP 选「自动获得」。",
             ),
             TutorialStep(
                 2,
                 "手机连同一个路由器",
                 "手机连的是同一个路由器 Wi-Fi，不需要连相机的 NIKON_ 热点；此时手机仍可正常上网。\n" +
-                    "用手机热点也行：让相机加入手机热点，手机自己保持在这个热点上。",
+                    "用手机热点也行：让相机加入手机热点，手机自己保持在这个热点上。\n" +
+                    "下次连接不用重新建：在相机里选中已保存的配置文件按 J 即可。",
             ),
             TutorialStep(
                 3,
