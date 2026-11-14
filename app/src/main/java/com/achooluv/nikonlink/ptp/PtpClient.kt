@@ -430,25 +430,6 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     /** Raw 0x90C7 payload; the camera may queue events here instead of the socket. */
     fun getEventRaw(): ByteArray = collect(Ptp.OP_NIKON_GET_EVENT, IntArray(0))
 
-    /** One live-view JPEG frame (0x9203). Throws when the body has no frame ready. */
-    fun liveViewImage(): ByteArray = collect(Ptp.OP_NIKON_GET_LIVE_VIEW_IMAGE, IntArray(0))
-
-    /**
-     * One live-view frame with a short read timeout. The body can leave 0x9203
-     * unanswered until a frame exists; the default 45 s socket timeout would stall
-     * the whole polling loop, so temporarily drop it to [timeoutMs].
-     */
-    fun liveViewImage(timeoutMs: Int): ByteArray {
-        val socket = cmdSocket
-        val previous = socket?.soTimeout ?: 45_000
-        runCatching { socket?.soTimeout = timeoutMs }
-        try {
-            return liveViewImage()
-        } finally {
-            runCatching { socket?.soTimeout = previous }
-        }
-    }
-
     /** LiveViewProhibitCondition (0xD1A4): bit 12 means a stale SDRAM shot blocks LV. */
     fun liveViewProhibit(): Int? {
         val data = collect(Ptp.OP_GET_DEVICE_PROP_VALUE, intArrayOf(0xD1A4))
@@ -457,11 +438,15 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
             ((data[2].toInt() and 0xFF) shl 16) or ((data[3].toInt() and 0xFF) shl 24)
     }
 
+    /** Reads one device property and returns its raw bytes (empty when absent). */
+    fun readProp(code: Int): ByteArray = collect(Ptp.OP_GET_DEVICE_PROP_VALUE, intArrayOf(code))
+
     /** Reads one device property and returns its first byte (0 when absent). */
     fun readPropByte(code: Int): Int {
         val data = collect(Ptp.OP_GET_DEVICE_PROP_VALUE, intArrayOf(code))
         return if (data.isNotEmpty()) data[0].toInt() and 0xFF else -1
     }
+
 
     /** Writes a device property with the PTP data-out phase (value in the END packet). */
     fun writeProp(code: Int, value: ByteArray) {
@@ -476,11 +461,6 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     /** 0x90C0(0xFFFFFFFF): capture straight to SDRAM without autofocus. */
     fun captureSdram() {
         transaction(Ptp.OP_NIKON_CAPTURE_TO_SDRAM, intArrayOf(-1))
-    }
-
-    /** 0x90CB: AF capture straight to SDRAM, no parameters. */
-    fun afCaptureSdram() {
-        transaction(Ptp.OP_NIKON_AF_CAPTURE_SDRAM, IntArray(0))
     }
 
     /**

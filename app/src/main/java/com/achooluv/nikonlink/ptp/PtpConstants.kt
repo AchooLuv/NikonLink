@@ -65,7 +65,7 @@ object Ptp {
 
     /**
      * Nikon vendor op: release the shutter. Params are (release mode, destination);
-     * [com.achooluv.nikonlink.ptp.Ptp.NIKON_RELEASE_NORMAL] + card is a plain shot.
+     * keep the AF flag at NIKON_CAPTURE_NO_AF for a plain shot.
      */
     const val OP_NIKON_CAPTURE_RELEASE = 0x9207
 
@@ -93,13 +93,6 @@ object Ptp {
 
     /** Nikon vendor op: pull one queued event (0x90C7). Modern bodies use this. */
     const val OP_NIKON_GET_EVENT = 0x90C7
-
-    /** Nikon vendor op: one JPEG frame of live view (0x9203). */
-    const val OP_NIKON_GET_LIVE_VIEW_IMAGE = 0x9203
-
-    /** Nikon vendor op: AF capture straight to SDRAM, no parameters (0x90CB). */
-    const val OP_NIKON_AF_CAPTURE_SDRAM = 0x90CB
-
     /** Nikon vendor op: delete an SDRAM image (0x0 clears all) to free the buffer. */
     const val OP_NIKON_DELETE_SDRAM_IMAGE = 0x90C3
 
@@ -110,8 +103,6 @@ object Ptp {
     const val NIKON_CAPTURE_AF_FIRST = -2
 
     // ---- Capture release parameters (op 0x9207) ------------------------------
-    const val NIKON_RELEASE_AF = 0
-    const val NIKON_RELEASE_NORMAL = 1
     const val NIKON_RELEASE_TO_CARD = 0
     const val NIKON_RELEASE_TO_SDRAM = 1
 
