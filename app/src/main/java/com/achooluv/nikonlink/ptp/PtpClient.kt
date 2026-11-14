@@ -422,6 +422,11 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     fun vendorStorageIds(): IntArray =
         Datasets.uint32Array(collect(Ptp.OP_NIKON_GET_VENDOR_STORAGE_IDS, IntArray(0)))
 
+    /** Frees one SDRAM image after it was read; keeps the small buffer from filling. */
+    fun deleteSdramImage(handle: Int) {
+        runCatching { transaction(Ptp.OP_NIKON_DELETE_SDRAM_IMAGE, intArrayOf(handle)) }
+    }
+
     /**
      * Puts the body into smart-device remote mode: live view on the camera, then
      * handed to the host. The camera screen switches to "已连接到智能设备".

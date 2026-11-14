@@ -90,6 +90,9 @@ object Ptp {
     /** Nikon vendor op: storage IDs including the SDRAM slot that holds remote shots. */
     const val OP_NIKON_GET_VENDOR_STORAGE_IDS = 0x9209
 
+    /** Nikon vendor op: delete an SDRAM image (0x0 clears all) to free the buffer. */
+    const val OP_NIKON_DELETE_SDRAM_IMAGE = 0x90C3
+
     // ---- 0x9207 parameters (see libgphoto2 ptp.h) ---------------------------
     /** No autofocus before the release. */
     const val NIKON_CAPTURE_NO_AF = -1
@@ -117,6 +120,12 @@ object Ptp {
 
     // ---- Events --------------------------------------------------------------
     const val EVENT_OBJECT_ADDED = 0x4002
+
+    /**
+     * Nikon event fired when a remote capture lands in SDRAM. The new object handle
+     * is in the event parameters and is NOT listed by GetObjectHandles.
+     */
+    const val EVENT_OBJECT_ADDED_IN_SDRAM = 0xC101
     const val EVENT_OBJECT_REMOVED = 0x4003
     const val EVENT_STORE_ADDED = 0x4004
     const val EVENT_STORE_REMOVED = 0x4005

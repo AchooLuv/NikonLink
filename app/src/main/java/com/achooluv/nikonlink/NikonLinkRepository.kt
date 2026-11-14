@@ -18,6 +18,7 @@ import com.achooluv.nikonlink.transfer.CameraDiscovery
 import com.achooluv.nikonlink.transfer.Downloader
 import com.achooluv.nikonlink.transfer.expandRawJpegPairs
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 
 /** Connection lifecycle as the UI sees it. */
@@ -179,6 +181,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val _captureNote = MutableStateFlow<String?>(null)
     val captureNote: StateFlow<String?> = _captureNote
 
+    /** Completed by the 0xC101 event when a remote shot lands in SDRAM. */
+    @Volatile
+    private var sdramLatch: CompletableDeferred<Int?>? = null
+
     /**
      * Remote shutter (op 0x9207). The body takes about a second to expose, so the
      * call runs on the IO scope and the UI disables the button while [CaptureState.Busy].
@@ -204,6 +210,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 }
                 if (fresh != null) {
                     _lastShot.value = runCatching { client.thumbnail(fresh) }.getOrNull()
+                    runCatching { client.deleteSdramImage(fresh) }
                     _captureState.value = CaptureState.Done
                     _captureNote.value = "已拍摄"
                     Diagnostics.log("遥控拍摄成功，handle=$fresh")
@@ -296,11 +303,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     /**
-     * Fires one shutter release and waits up to ~3 s for a new object to appear.
-     * Returns the new handle, or null when the body accepted the command but wrote
-     * nothing (Auto mode, no card, or a remote-mode state that ignores release).
+     * Fires one shutter release and waits for the camera to report the new SDRAM
+     * object. Nikon delivers that handle through event 0xC101, not GetObjectHandles.
      */
     private suspend fun shootAndWait(before: Set<Int>, release: Int, label: String): Int? {
+        val latch = CompletableDeferred<Int?>()
+        sdramLatch = latch
         try {
             client.capture(release = release)
             Diagnostics.log("$label 指令已返回")
@@ -308,13 +316,22 @@ class NikonLinkRepository private constructor(private val app: Application) {
             Diagnostics.log("$label 失败：${humanError(e)}")
             return null
         }
-        for (attempt in 1..20) {
+        val fromEvent = withTimeoutOrNull(7_000) { latch.await() }
+        if (fromEvent != null) {
+            Diagnostics.log("$label 收到 SDRAM 照片 handle=$fromEvent")
+            return fromEvent
+        }
+        // Fallback: some bodies also expose the shot in a normal storage.
+        for (attempt in 1..8) {
             delay(400)
             val now = snapshotHandles()
             val fresh = now.filter { it !in before }.maxOrNull()
-            Diagnostics.log("$label 第 $attempt 次检查：共 ${now.size} 个，新增 ${now.count { it !in before }}")
-            if (fresh != null) return fresh
+            if (fresh != null) {
+                Diagnostics.log("$label 句柄列表发现新对象 $fresh（第 $attempt 次）")
+                return fresh
+            }
         }
+        Diagnostics.log("$label 7 秒内没有 SDRAM 事件也没有新句柄")
         return null
     }
 
@@ -911,6 +928,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
     // ----------------------------------------------------------------- events
 
     private fun handleEvent(event: PtpEvent) {
+        if (event.code == Ptp.EVENT_OBJECT_ADDED_IN_SDRAM) {
+            val handle = event.params.firstOrNull()
+            Diagnostics.log("SDRAM 新照片事件 0xC101 handle=$handle")
+            sdramLatch?.complete(handle)
+            return
+        }
         if (event.code != Ptp.EVENT_OBJECT_ADDED) return
         val handle = event.params.firstOrNull() ?: return
         if (!settings.autoPull.value) return
