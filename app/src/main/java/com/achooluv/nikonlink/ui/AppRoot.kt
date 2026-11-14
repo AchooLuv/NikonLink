@@ -1,4 +1,4 @@
-﻿package com.achooluv.nikonlink.ui
+package com.achooluv.nikonlink.ui
 
 import android.app.Activity
 import android.view.WindowManager
@@ -69,9 +69,9 @@ fun AppRoot(repo: NikonLinkRepository) {
     }
 
     val tabs = listOf(
-        Tab("杩炴帴") { Icon(Icons.Rounded.Link, contentDescription = null) },
-        Tab("娴忚") { Icon(Icons.Rounded.PhotoLibrary, contentDescription = null) },
-        Tab("璁剧疆") { Icon(Icons.Rounded.Settings, contentDescription = null) },
+        Tab("连接") { Icon(Icons.Rounded.Link, contentDescription = null) },
+        Tab("浏览") { Icon(Icons.Rounded.PhotoLibrary, contentDescription = null) },
+        Tab("设置") { Icon(Icons.Rounded.Settings, contentDescription = null) },
     )
 
     Box(Modifier.fillMaxSize().background(Ink)) {
