@@ -194,10 +194,20 @@ class NikonLinkRepository private constructor(private val app: Application) {
             _captureState.value = CaptureState.Busy
             _captureNote.value = "正在拍摄…"
             try {
+                val before = newestHandle()
                 client.capture()
-                _captureState.value = CaptureState.Done
-                _captureNote.value = "已拍摄"
-                Diagnostics.log("遥控拍摄成功")
+                delay(900)
+                val after = newestHandle()
+                if (after != null && after != before) {
+                    _lastShot.value = runCatching { client.thumbnail(after) }.getOrNull()
+                    _captureState.value = CaptureState.Done
+                    _captureNote.value = "已拍摄"
+                    Diagnostics.log("遥控拍摄成功，handle=$after")
+                } else {
+                    _captureState.value = CaptureState.Failed
+                    _captureNote.value = "相机没有写入新照片，检查挡位（M/A/P/S）与存储卡"
+                    Diagnostics.log("遥控拍摄：没有检测到新对象")
+                }
             } catch (e: Exception) {
                 _captureState.value = CaptureState.Failed
                 _captureNote.value = "拍摄失败：${humanError(e)}"
@@ -210,6 +220,55 @@ class NikonLinkRepository private constructor(private val app: Application) {
         _captureState.value = CaptureState.Idle
         _captureNote.value = null
     }
+
+    /** Remote-mode lifecycle for the capture screen. */
+    enum class RemoteState { Idle, Starting, Ready, Failed }
+
+    private val _remote = MutableStateFlow(RemoteState.Idle)
+    val remote: StateFlow<RemoteState> = _remote
+
+    /** Thumbnail of the last frame this app shot, shown as a capture preview. */
+    private val _lastShot = MutableStateFlow<ByteArray?>(null)
+    val lastShot: StateFlow<ByteArray?> = _lastShot
+
+    fun beginRemote() {
+        if (_state.value !is ConnState.Connected) {
+            _remote.value = RemoteState.Failed
+            return
+        }
+        scope.launch {
+            _remote.value = RemoteState.Starting
+            try {
+                client.startLiveView()
+                _remote.value = RemoteState.Ready
+                Diagnostics.log("遥控模式已开启")
+            } catch (e: Exception) {
+                _remote.value = RemoteState.Failed
+                Diagnostics.log("遥控模式开启失败：${humanError(e)}")
+            }
+        }
+    }
+
+    fun endRemote() {
+        scope.launch {
+            runCatching { client.stopLiveView() }
+            if (_remote.value != RemoteState.Failed) _remote.value = RemoteState.Idle
+        }
+    }
+
+    /** Highest object handle on any storage, used to detect that a shot landed. */
+    private suspend fun newestHandle(): Int? = withContext(Dispatchers.IO) {
+        runCatching {
+            var best: Int? = null
+            for (storage in client.storageIds()) {
+                for (handle in client.objectHandles(storage)) {
+                    if (best == null || handle > best) best = handle
+                }
+            }
+            best
+        }.getOrNull()
+    }
+
 
     private var thumbLargeUnsupported = false
     private var extrasLoaded = false

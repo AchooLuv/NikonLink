@@ -1,10 +1,11 @@
 package com.achooluv.nikonlink.ui
 
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.PhotoCamera
@@ -24,12 +26,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -39,23 +43,32 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.achooluv.nikonlink.NikonLinkRepository
 
 /**
- * Full-screen remote shutter. Live view is not exposed yet — the body returns
- * "not ready" for 0x9203 — so this screen focuses on the one action that works:
- * release the shutter, then let the normal auto-pull flow fetch the frame.
+ * Full-screen remote shutter. The body is switched into smart-device remote mode
+ * on entry (0x9201 + 0x90C2), the shutter is 0x9207, and the newest object on the
+ * card is fetched back as a preview so the page shows what was just captured.
  */
 @Composable
 fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     val identity by repo.identity.collectAsStateWithLifecycle()
     val capture by repo.captureState.collectAsStateWithLifecycle()
     val note by repo.captureNote.collectAsStateWithLifecycle()
+    val remote by repo.remote.collectAsStateWithLifecycle()
+    val shot by repo.lastShot.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
 
     BackHandler { onClose() }
+    LaunchedEffect(Unit) { repo.beginRemote() }
     DisposableEffect(Unit) {
-        onDispose { repo.resetCaptureState() }
+        onDispose {
+            repo.endRemote()
+            repo.resetCaptureState()
+        }
     }
 
     val busy = capture == NikonLinkRepository.CaptureState.Busy
+    val preview = shot?.let { bytes ->
+        runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull()
+    }
 
     Column(
         Modifier
@@ -81,24 +94,48 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
         }
 
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    Icons.Rounded.PhotoCamera,
-                    contentDescription = null,
-                    tint = PaperDim,
-                    modifier = Modifier.size(56.dp),
-                )
-                Spacer(Modifier.height(14.dp))
-                Text("取景暂不可用", color = Paper, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "本版先支持遥控快门；拍摄后若开启自动拉取，照片会回到手机。",
-                    color = NikonLinkTheme.colors.dim,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 24.dp),
-                )
+            if (preview != null) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Image(
+                        bitmap = preview.asImageBitmap(),
+                        contentDescription = "刚拍摄的照片",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp)),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text("刚拍摄", color = NikonLinkTheme.colors.dim, fontSize = 11.sp)
+                }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Rounded.PhotoCamera,
+                        contentDescription = null,
+                        tint = PaperDim,
+                        modifier = Modifier.size(56.dp),
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        when (remote) {
+                            NikonLinkRepository.RemoteState.Starting -> "正在接管相机…"
+                            NikonLinkRepository.RemoteState.Failed -> "遥控模式未开启"
+                            else -> "等待拍摄"
+                        },
+                        color = Paper,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "相机已切到遥控模式；拍一张后这里会显示刚拍的照片。",
+                        color = NikonLinkTheme.colors.dim,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp),
+                    )
+                }
             }
         }
 

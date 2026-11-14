@@ -68,6 +68,15 @@ object Ptp {
      */
     const val OP_NIKON_CAPTURE_RELEASE = 0x9207
 
+    /** Nikon vendor op: start live view on the body (0x9201). */
+    const val OP_NIKON_START_LIVE_VIEW = 0x9201
+
+    /** Nikon vendor op: hand live view to the host (0x90C2, param 0 body / 1 host). */
+    const val OP_NIKON_CHANGE_CAMERA_MODE = 0x90C2
+
+    /** Nikon vendor op: stop live view (0x9206). */
+    const val OP_NIKON_END_LIVE_VIEW = 0x9206
+
     // ---- Capture release parameters (op 0x9207) ------------------------------
     const val NIKON_RELEASE_AF = 0
     const val NIKON_RELEASE_NORMAL = 1

@@ -416,6 +416,20 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     }
 
     /**
+     * Puts the body into smart-device remote mode: live view on the camera, then
+     * handed to the host. The camera screen switches to "已连接到智能设备".
+     */
+    fun startLiveView() {
+        transaction(Ptp.OP_NIKON_START_LIVE_VIEW, IntArray(0))
+        transaction(Ptp.OP_NIKON_CHANGE_CAMERA_MODE, intArrayOf(1))
+    }
+
+    /** Ends remote mode. Best effort: the session may already be gone. */
+    fun stopLiveView() {
+        runCatching { transaction(Ptp.OP_NIKON_END_LIVE_VIEW, IntArray(0)) }
+    }
+
+    /**
      * Streams [length] bytes of object [handle] starting at [offset] into [sink].
      * Returns the byte count actually written (camera-reported when available).
      */
