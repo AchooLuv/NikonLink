@@ -120,6 +120,28 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 - **稳定性**：`TCP_NODELAY`、4 MiB 接收缓冲、15 s 心跳、事件线程监测断链、指数退避重连、前台服务保活
 - **UI**：Jetpack Compose + Material 3，尼康黄（`#FFCD00`）单一强调色，深色底；R8 收缩后整包约 2 MB
 
+### 已验证的尼康厂商指令（Z50II，固件 C 1.11）
+
+配对、快门与取景均通过 PTP/IP 的厂商操作完成，参数以 libgphoto2 的
+[`ptp.h`](https://github.com/gphoto/libgphoto2/blob/master/camlibs/ptp2/ptp.h) 为准：
+
+| 指令 | 参数 | 作用 | 状态 |
+|---|---|---|---|
+| `0x9439` | 9 / 13 | 进入 / 退出智能设备配对模式 | ✅ |
+| `0x952B` | 无 | 读取一次性配对码 | ✅ |
+| `0x935A` | `0x2001`（OK）/ `0x2002`（失败） | 完成配对，相机保存网络 | ✅ |
+| `0x9201` | 无 | StartLiveView | ✅ |
+| `0x90C2` | 1=交给主机 / 0=交还机身 | ChangeCameraMode | ✅ |
+| `0x9202` | 无 | EndLiveView（**不是** DeviceReady） | ✅ |
+| `0x9203` | 无 | GetLiveViewImage | ⚠️ 返回 `0xA00B` 帧未就绪 |
+| `0x90C8` | 无 | DeviceReady | ✅ |
+| `0x9207` | `0xFFFFFFFF`=不 AF / `0xFFFFFFFE`=先 AF；`1`=SDRAM / `0`=卡 | InitiateCaptureRecInMedia（快门） | ✅ 指令被接受 |
+| `0x9209` | 无 | 厂商存储 ID（含 SDRAM） | 用于查找 SDRAM 中的照片 |
+| `0x9407` / `0x9408` | 3/0；无 | 「发送到智能设备」队列锁定 / 读取 | ✅ |
+| `0x90C4` | 句柄 | 大缩略图 | ✅ |
+
+配对后相机改由本机身份（`NikonLink (Android)`）识别，无需每次重走连接向导。
+
 ## 构建
 
 ```bash

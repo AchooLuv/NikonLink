@@ -194,6 +194,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
             _captureState.value = CaptureState.Busy
             _captureNote.value = "正在拍摄…"
             try {
+                logStorages()
                 val before = snapshotHandles()
                 Diagnostics.log("遥控拍摄：拍前 ${before.size} 个对象，最大 ${before.maxOrNull() ?: "-"}")
                 var fresh = shootAndWait(before, Ptp.NIKON_CAPTURE_NO_AF, "不AF·存SDRAM")
@@ -266,6 +267,17 @@ class NikonLinkRepository private constructor(private val app: Application) {
             runCatching { client.stopLiveView() }
             runCatching { client.returnToCamera() }
             _remote.value = RemoteState.Idle
+        }
+    }
+
+    /** One-shot storage census so a capture failure shows where the shot should land. */
+    private suspend fun logStorages() = withContext(Dispatchers.IO) {
+        val card = runCatching { client.storageIds() }.getOrDefault(IntArray(0))
+        val vendor = runCatching { client.vendorStorageIds() }.getOrDefault(IntArray(0))
+        Diagnostics.log("存储：普通=${card.joinToString()} 厂商=${vendor.joinToString()}")
+        for (storage in (card.toList() + vendor.toList()).distinct()) {
+            val count = runCatching { client.objectHandles(storage).size }.getOrDefault(-1)
+            Diagnostics.log("  存储 0x${storage.toUInt().toString(16)} 对象数=$count")
         }
     }
 
