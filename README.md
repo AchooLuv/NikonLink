@@ -11,9 +11,10 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0-7F52FF)](#技术实现)
 
 <p align="center">
-  <img src="docs/screenshot-connect.png" width="240" alt="连接页">
-  <img src="docs/screenshot-tutorial.png" width="240" alt="连接教程">
-  <img src="docs/screenshot-settings.png" width="240" alt="设置页">
+  <img src="docs/screenshots/connect-idle.jpg" width="180" alt="连接页">
+  <img src="docs/screenshots/connect-connected.jpg" width="180" alt="已连接">
+  <img src="docs/screenshots/browse.jpg" width="180" alt="浏览与下载">
+  <img src="docs/screenshots/settings.jpg" width="180" alt="设置页">
 </p>
 
 ## 它解决什么
@@ -46,16 +47,6 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 | 应用内更新 | 「设置 → 关于」自动比对 GitHub Releases，有新版本时显示徽标；弹窗查看更新内容，App 内下载 APK 并拉起系统安装器（非静默，需允许安装未知应用） |
 | 配对相机 | 「设置 → 连接 → 配对相机」按 SnapBridge 的同一套 PTP/IP 配对流程注册本机（进入配对模式 → 取配对码 → 完成配对）；配对后相机记住本机、保存网络，不必每次重走连接向导 |
 | 遥控拍摄 | 连接后轻触连接页的大圆环进入遥控页，按一下就触发相机快门（尼康 `0x9207`）；配合「拍摄后自动拉取」拍完自动回到手机 |
-
-## 界面
-
-| 模块 | 界面 | 说明 |
-|---|---|---|
-| **连接 · 待机** | <img src="docs/screenshots/connect-idle.jpg" width="240" alt="连接·待机" /> | 相机热点 / 同一 Wi-Fi 两种模式；未连接时给出分步教程、手动 IP 与诊断入口 |
-| **连接 · 已连接** | <img src="docs/screenshots/connect-connected.jpg" width="240" alt="连接·已连接" /> | 圆环常驻水波与心跳动画，轻触整圈进入遥控拍摄；下方卡片显示机型、固件、序列号、电量与存储 |
-| **浏览与下载** | <img src="docs/screenshots/browse.jpg" width="240" alt="浏览与下载" /> | 存储卡分页读取、JPEG 缩略图懒加载；按全部 / 未下载 / 照片 / 视频 / RAW 筛选，勾选后下载 |
-| **遥控拍摄** | <img src="docs/screenshots/remote.jpg" width="240" alt="遥控拍摄" /> | 顶部显示挡位 / 光圈 / ISO / 快门；按快门拍到存储卡，先出小图再后台换成大图预览 |
-| **设置** | <img src="docs/screenshots/settings.jpg" width="240" alt="设置" /> | 传输、连接、存储、诊断四组；「关于」可检查更新与查看版本 |
 
 ## 下载与安装
 
