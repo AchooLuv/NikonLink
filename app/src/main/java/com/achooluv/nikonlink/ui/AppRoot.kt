@@ -106,8 +106,7 @@ fun AppRoot(repo: NikonLinkRepository) {
                     0 -> ConnectScreen(
                         repo = repo,
                         onTutorial = { showTutorial = true },
-                        onBrowse = { tabIndex = 1 },
-                        onRemote = { showRemote = true },
+                                onRemote = { showRemote = true },
                     )
                     1 -> BrowseScreen(repo)
                     else -> SettingsScreen(repo)

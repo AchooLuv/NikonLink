@@ -6,6 +6,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -28,7 +29,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BatteryFull
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.PhotoCamera
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,7 +48,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -68,7 +70,6 @@ import com.achooluv.nikonlink.data.SettingsStore
 fun ConnectScreen(
     repo: NikonLinkRepository,
     onTutorial: () -> Unit,
-    onBrowse: () -> Unit,
     onRemote: () -> Unit,
 ) {
     val state by repo.state.collectAsStateWithLifecycle()
@@ -130,16 +131,6 @@ fun ConnectScreen(
             enabled = !connected && !busy,
             modifier = Modifier.padding(horizontal = 20.dp),
         )
-        if (connected || busy) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "断开连接后可切换模式",
-                modifier = Modifier.fillMaxWidth(),
-                color = NikonLinkTheme.colors.dim,
-                fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-            )
-        }
 
         Spacer(Modifier.height(22.dp))
         Column(Modifier.padding(horizontal = 20.dp)) {
@@ -163,40 +154,53 @@ fun ConnectScreen(
                     disabledContentColor = PaperDim,
                 ),
             ) {
-                Text(
-                    when {
-                        state is ConnState.Reconnecting -> "停止重连"
-                        state is ConnState.Connecting -> "取消连接"
-                        connected -> "断开连接"
-                        mode == ConnectMode.STA -> "扫描并连接"
-                        else -> "连接相机"
-                    },
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                )
+                if (connected) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("断开连接", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(1.dp))
+                        Text(
+                            "断开后可切换模式",
+                            fontSize = 9.sp,
+                            color = Color(0xFF161200).copy(alpha = 0.62f),
+                        )
+                    }
+                } else {
+                    Text(
+                        when {
+                            state is ConnState.Reconnecting -> "停止重连"
+                            state is ConnState.Connecting -> "取消连接"
+                            mode == ConnectMode.STA -> "扫描并连接"
+                            else -> "连接相机"
+                        },
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
 
-            Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(
-                    onClick = onTutorial,
-                    modifier = Modifier.weight(1f).height(46.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
-                ) {
-                    Text("连接教程", color = Paper, fontSize = 13.sp)
-                }
-                OutlinedButton(
-                    onClick = { manualDialog = true },
-                    modifier = Modifier.weight(1f).height(46.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
-                ) {
-                    Text(
-                        if (mode == ConnectMode.STA) "手动 IP" else "手动 SSID",
-                        color = Paper,
-                        fontSize = 13.sp,
-                    )
+            if (!connected) {
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = onTutorial,
+                        modifier = Modifier.weight(1f).height(46.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
+                    ) {
+                        Text("连接教程", color = Paper, fontSize = 13.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { manualDialog = true },
+                        modifier = Modifier.weight(1f).height(46.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
+                    ) {
+                        Text(
+                            if (mode == ConnectMode.STA) "手动 IP" else "手动 SSID",
+                            color = Paper,
+                            fontSize = 13.sp,
+                        )
+                    }
                 }
             }
 
@@ -286,29 +290,6 @@ fun ConnectScreen(
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = { repo.refreshLibrary() },
-                        modifier = Modifier.weight(1f).height(46.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
-                    ) {
-                        Icon(Icons.Rounded.Refresh, null, tint = Paper, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("刷新相册", color = Paper, fontSize = 13.sp)
-                    }
-                    Button(
-                        onClick = onBrowse,
-                        modifier = Modifier.weight(1f).height(46.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = NikonLinkTheme.colors.card,
-                            contentColor = Paper,
-                        ),
-                    ) {
-                        Text("浏览与下载", fontSize = 13.sp)
-                    }
-                }
             } else if (!connected) {
                 NikonCard {
                     if (mode == ConnectMode.STA) {
@@ -406,16 +387,34 @@ private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
     val busy = state is ConnState.Connecting || state is ConnState.Reconnecting
     val failed = state is ConnState.Error
 
-    // While connected, keep a slow inward ripple running. It only exists in this
-    // branch, so an idle/disconnected screen paints nothing and costs nothing.
+    // While connected: inner water ripples converge continuously, and the ring
+    // itself beats like a heart (two quick pulses, then rest).
     var flow = 1f
+    var beat = 0f
     if (connected) {
         val ripple = rememberInfiniteTransition(label = "ripple")
         flow = ripple.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Restart),
+            animationSpec = infiniteRepeatable(tween(3000, easing = LinearEasing), RepeatMode.Restart),
             label = "focus",
+        ).value
+        beat = ripple.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                keyframes {
+                    durationMillis = 1600
+                    0f at 0
+                    1f at 110
+                    0f at 260
+                    0.8f at 360
+                    0f at 560
+                    0f at 1600
+                },
+                RepeatMode.Restart,
+            ),
+            label = "heartbeat",
         ).value
     }
 
@@ -458,9 +457,8 @@ private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            ringColor.copy(
-                                alpha = if (busy) pulse else 0.18f + 0.10f * (1f - flow),
-                            ),
+                            ringColor.copy(alpha = if (busy) pulse else 0.30f + 0.34f * beat),
+                            ringColor.copy(alpha = if (busy) 0f else 0.10f + 0.10f * beat),
                             Color.Transparent,
                         ),
                         center = center,
@@ -468,24 +466,6 @@ private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
                     ),
                     radius = size.minDimension / 2f,
                 )
-            }
-
-            // Looping convergence waves: three staggered rings shrink onto the
-            // emblem and fade out, then the cycle restarts invisibly.
-            if (connected) {
-                val outer = size.minDimension / 2f * 1.45f
-                val inner = size.minDimension / 2f
-                for (i in 0..2) {
-                    val p = ((flow - i * 0.16f) / 0.68f).let { if (it < 0f) it + 1f else it }
-                        .coerceIn(0f, 1f)
-                    if (p <= 0f || p >= 1f) continue
-                    val radius = outer + (inner - outer) * p
-                    drawCircle(
-                        color = NikonYellow.copy(alpha = 0.14f * (1f - p)),
-                        radius = radius,
-                        style = Stroke(2.dp.toPx()),
-                    )
-                }
             }
 
             drawArc(
@@ -499,17 +479,23 @@ private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
             )
 
             when {
-                connected -> drawArc(
-                    brush = Brush.sweepGradient(
-                        listOf(NikonYellow, Color(0xFFFFE45C), NikonYellow),
-                    ),
-                    startAngle = -90f,
-                    sweepAngle = 360f,
-                    useCenter = false,
-                    topLeft = topLeft,
-                    size = arcSize,
-                    style = Stroke(stroke, cap = StrokeCap.Round),
-                )
+                connected -> {
+                    // Heartbeat: the yellow ring swells slightly on each beat.
+                    val scale = 1f + 0.03f * beat
+                    val ringSize = (size.minDimension - stroke) * scale
+                    val ringTopLeft = Offset((size.width - ringSize) / 2f, (size.height - ringSize) / 2f)
+                    drawArc(
+                        brush = Brush.sweepGradient(
+                            listOf(NikonYellow, Color(0xFFFFE45C), NikonYellow),
+                        ),
+                        startAngle = -90f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        topLeft = ringTopLeft,
+                        size = Size(ringSize, ringSize),
+                        style = Stroke(stroke, cap = StrokeCap.Round),
+                    )
+                }
                 busy -> {
                     drawArc(
                         color = NikonYellow,
@@ -536,32 +522,77 @@ private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
         Surface(
             onClick = { onRemote?.invoke() },
             enabled = onRemote != null,
-            modifier = Modifier.size(150.dp),
+            modifier = Modifier.size(150.dp).graphicsLayer { val s = 1f + 0.02f * beat; scaleX = s; scaleY = s },
             shape = RoundedCornerShape(75.dp),
             color = InkRaised,
             border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.fillMaxSize().clip(RoundedCornerShape(75.dp)), contentAlignment = Alignment.Center) {
+                // Water surface: a drop lands in the centre each cycle, sending two
+                // soft-edged rings outward; they decelerate and fade before the rim.
+                if (connected) {
+                    Canvas(Modifier.fillMaxSize()) {
+                        val maxR = size.minDimension / 2f
+                        for (i in 0..1) {
+                            val p = (flow + i * 0.5f) % 1f
+                            val eased = 1f - (1f - p) * (1f - p) // decelerating swell
+                            val radius = maxR * eased * 0.92f
+                            val alpha = 0.26f * (1f - eased)
+                            if (radius > 4f && alpha > 0.01f) {
+                                // Three offset strokes fake a soft, blurred crest.
+                                for (offset in listOf(-2f, 0f, 2f)) {
+                                    drawCircle(
+                                        color = NikonYellow.copy(
+                                            alpha = if (offset == 0f) alpha else alpha * 0.45f,
+                                        ),
+                                        radius = radius + offset.dp.toPx(),
+                                        style = Stroke(2.4.dp.toPx()),
+                                    )
+                                }
+                            }
+                        }
+                        // Impact bloom right after the drop.
+                        val bloom = (1f - flow * 2.4f).coerceIn(0f, 1f)
+                        if (bloom > 0f) {
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(NikonYellow.copy(alpha = 0.18f * bloom), Color.Transparent),
+                                    center = center,
+                                    radius = maxR * 0.6f,
+                                ),
+                                radius = maxR * 0.6f,
+                            )
+                        }
+                    }
+                }
+                if (connected) {
                     Icon(
-                        if (connected) Icons.Rounded.PhotoCamera else Icons.Rounded.Link,
-                        contentDescription = null,
-                        tint = if (connected) NikonYellow else PaperDim,
-                        modifier = Modifier.size(30.dp),
+                        Icons.Rounded.PhotoCamera,
+                        contentDescription = "遥控拍摄",
+                        tint = NikonYellow,
+                        modifier = Modifier.size(36.dp),
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        when {
-                            connected -> "遥控拍摄"
-                            busy -> "LINKING"
-                            failed -> "OFFLINE"
-                            else -> "STANDBY"
-                        },
-                        color = if (connected) NikonYellow else PaperDim,
-                        fontSize = if (connected) 12.sp else 10.sp,
-                        letterSpacing = if (connected) 1.sp else 2.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
+                } else {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Rounded.Link,
+                            contentDescription = null,
+                            tint = PaperDim,
+                            modifier = Modifier.size(30.dp),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            when {
+                                busy -> "LINKING"
+                                failed -> "OFFLINE"
+                                else -> "STANDBY"
+                            },
+                            color = PaperDim,
+                            fontSize = 10.sp,
+                            letterSpacing = 2.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
         }
