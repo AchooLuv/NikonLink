@@ -250,30 +250,22 @@ fun ConnectScreen(
 
             if (state is ConnState.Error) {
                 Spacer(Modifier.height(10.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = { manualDialog = true },
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
-                    ) {
-                        Text("换 IP 重试", color = Paper, fontSize = 12.sp)
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            clipboard.setText(
-                                androidx.compose.ui.text.AnnotatedString(
-                                    com.achooluv.nikonlink.Diagnostics.dump(context),
-                                ),
-                            )
-                            android.widget.Toast.makeText(context, "诊断信息已复制", android.widget.Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
-                    ) {
-                        Text("复制诊断信息", color = Paper, fontSize = 12.sp)
-                    }
+                // "换 IP 重试" used to sit here, duplicating the 手动 IP / 手动 SSID
+                // button just above (same dialog, and it is always visible on error).
+                OutlinedButton(
+                    onClick = {
+                        clipboard.setText(
+                            androidx.compose.ui.text.AnnotatedString(
+                                com.achooluv.nikonlink.Diagnostics.dump(context),
+                            ),
+                        )
+                        android.widget.Toast.makeText(context, "诊断信息已复制", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, NikonLinkTheme.colors.line),
+                ) {
+                    Text("复制诊断信息", color = Paper, fontSize = 12.sp)
                 }
             }
 
