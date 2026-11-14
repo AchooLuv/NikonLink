@@ -405,6 +405,17 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         parsePairingCode(collect(Ptp.OP_NIKON_GET_PAIRING_CODE, IntArray(0)))
 
     /**
+     * Releases the shutter remotely (op 0x9207). Blocks for roughly a second while
+     * the body exposes; the caller runs it off the main thread.
+     */
+    fun capture(
+        release: Int = Ptp.NIKON_RELEASE_NORMAL,
+        destination: Int = Ptp.NIKON_RELEASE_TO_CARD,
+    ) {
+        transaction(Ptp.OP_NIKON_CAPTURE_RELEASE, intArrayOf(release, destination))
+    }
+
+    /**
      * Streams [length] bytes of object [handle] starting at [offset] into [sink].
      * Returns the byte count actually written (camera-reported when available).
      */

@@ -170,6 +170,47 @@ class NikonLinkRepository private constructor(private val app: Application) {
         _pairingNote.value = null
     }
 
+    /** State of the remote shutter button on the capture screen. */
+    enum class CaptureState { Idle, Busy, Done, Failed }
+
+    private val _captureState = MutableStateFlow(CaptureState.Idle)
+    val captureState: StateFlow<CaptureState> = _captureState
+
+    private val _captureNote = MutableStateFlow<String?>(null)
+    val captureNote: StateFlow<String?> = _captureNote
+
+    /**
+     * Remote shutter (op 0x9207). The body takes about a second to expose, so the
+     * call runs on the IO scope and the UI disables the button while [CaptureState.Busy].
+     */
+    fun capture() {
+        if (_state.value !is ConnState.Connected) {
+            _captureState.value = CaptureState.Failed
+            _captureNote.value = "相机未连接"
+            return
+        }
+        if (_captureState.value == CaptureState.Busy) return
+        scope.launch {
+            _captureState.value = CaptureState.Busy
+            _captureNote.value = "正在拍摄…"
+            try {
+                client.capture()
+                _captureState.value = CaptureState.Done
+                _captureNote.value = "已拍摄"
+                Diagnostics.log("遥控拍摄成功")
+            } catch (e: Exception) {
+                _captureState.value = CaptureState.Failed
+                _captureNote.value = "拍摄失败：${humanError(e)}"
+                Diagnostics.log("遥控拍摄失败：${humanError(e)}")
+            }
+        }
+    }
+
+    fun resetCaptureState() {
+        _captureState.value = CaptureState.Idle
+        _captureNote.value = null
+    }
+
     private var thumbLargeUnsupported = false
     private var extrasLoaded = false
     private var allHandles: List<Int> = emptyList()

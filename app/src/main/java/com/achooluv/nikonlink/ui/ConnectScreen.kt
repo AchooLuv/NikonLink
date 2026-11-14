@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BatteryFull
 import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -66,6 +67,7 @@ fun ConnectScreen(
     repo: NikonLinkRepository,
     onTutorial: () -> Unit,
     onBrowse: () -> Unit,
+    onRemote: () -> Unit,
 ) {
     val state by repo.state.collectAsStateWithLifecycle()
     val identity by repo.identity.collectAsStateWithLifecycle()
@@ -93,7 +95,7 @@ fun ConnectScreen(
         ) {
             Spacer(Modifier.height(20.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            StatusEmblem(state)
+            StatusEmblem(state = state, onRemote = if (state is ConnState.Connected) onRemote else null)
         }
 
         Spacer(Modifier.height(26.dp))
@@ -397,7 +399,7 @@ private fun StepLine(number: String, text: String) {
 }
 
 @Composable
-private fun StatusEmblem(state: ConnState) {
+private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
     val connected = state is ConnState.Connected
     val busy = state is ConnState.Connecting || state is ConnState.Reconnecting
     val failed = state is ConnState.Error
@@ -494,6 +496,8 @@ private fun StatusEmblem(state: ConnState) {
         }
 
         Surface(
+            onClick = { onRemote?.invoke() },
+            enabled = onRemote != null,
             modifier = Modifier.size(150.dp),
             shape = RoundedCornerShape(75.dp),
             color = InkRaised,
@@ -502,7 +506,7 @@ private fun StatusEmblem(state: ConnState) {
             Box(contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
-                        Icons.Rounded.Link,
+                        if (connected) Icons.Rounded.PhotoCamera else Icons.Rounded.Link,
                         contentDescription = null,
                         tint = if (connected) NikonYellow else PaperDim,
                         modifier = Modifier.size(30.dp),
@@ -510,14 +514,14 @@ private fun StatusEmblem(state: ConnState) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         when {
-                            connected -> "LINKED"
+                            connected -> "遥控拍摄"
                             busy -> "LINKING"
                             failed -> "OFFLINE"
                             else -> "STANDBY"
                         },
                         color = if (connected) NikonYellow else PaperDim,
-                        fontSize = 10.sp,
-                        letterSpacing = 2.sp,
+                        fontSize = if (connected) 12.sp else 10.sp,
+                        letterSpacing = if (connected) 1.sp else 2.sp,
                         fontWeight = FontWeight.Bold,
                     )
                 }
@@ -632,7 +636,7 @@ private fun statusSubtitle(state: ConnState, mode: ConnectMode): String = when (
         "打开相机 Wi-Fi，让手机连上 NIKON_ 网络后点「连接相机」。"
     }
     is ConnState.Connecting -> state.step
-    is ConnState.Connected -> "相机会话已建立 · 可以浏览与下载了"
+    is ConnState.Connected -> "相机会话已建立 · 轻触圆环进入遥控拍摄"
     is ConnState.Reconnecting ->
         "第 ${state.attempt} 次重试，${state.waitSeconds} 秒后开始 · 点上方按钮可停止"
     is ConnState.Error -> state.message

@@ -62,6 +62,18 @@ object Ptp {
     /** Nikon vendor op: finish pairing (param 0x2001 accept, 0x2002 reject). */
     const val OP_NIKON_COMPLETE_PAIRING = 0x935A
 
+    /**
+     * Nikon vendor op: release the shutter. Params are (release mode, destination);
+     * [com.achooluv.nikonlink.ptp.Ptp.NIKON_RELEASE_NORMAL] + card is a plain shot.
+     */
+    const val OP_NIKON_CAPTURE_RELEASE = 0x9207
+
+    // ---- Capture release parameters (op 0x9207) ------------------------------
+    const val NIKON_RELEASE_AF = 0
+    const val NIKON_RELEASE_NORMAL = 1
+    const val NIKON_RELEASE_TO_CARD = 0
+    const val NIKON_RELEASE_TO_SDRAM = 1
+
     // ---- Response codes ------------------------------------------------------
     const val RESP_OK = 0x2001
     const val RESP_GENERAL_ERROR = 0x2002

@@ -1,4 +1,4 @@
-package com.achooluv.nikonlink.ui
+﻿package com.achooluv.nikonlink.ui
 
 import android.app.Activity
 import android.view.WindowManager
@@ -46,19 +46,22 @@ private data class Tab(val label: String, val icon: @Composable () -> Unit)
 fun AppRoot(repo: NikonLinkRepository) {
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
     var showTutorial by rememberSaveable { mutableStateOf(false) }
+    var showRemote by rememberSaveable { mutableStateOf(false) }
 
     // Back / gesture navigation closes the tutorial first; only a second back
     // leaves the app.
     BackHandler(enabled = showTutorial) { showTutorial = false }
+    // The remote shutter is a full-screen page; back returns to the connect tab.
+    BackHandler(enabled = showRemote) { showRemote = false }
 
-    // Keep the screen awake while bytes are moving; release it as soon as the
-    // batch ends so the phone can sleep again.
+    // Keep the screen awake while bytes are moving or while the remote shutter is
+    // open; release it as soon as both are done so the phone can sleep again.
     val progress by repo.progress.collectAsStateWithLifecycle()
     val connectMode by repo.settings.mode.collectAsStateWithLifecycle()
     val activity = LocalContext.current as? Activity
-    LaunchedEffect(progress.active) {
+    LaunchedEffect(progress.active, showRemote) {
         val window = activity?.window ?: return@LaunchedEffect
-        if (progress.active) {
+        if (progress.active || showRemote) {
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -66,9 +69,9 @@ fun AppRoot(repo: NikonLinkRepository) {
     }
 
     val tabs = listOf(
-        Tab("连接") { Icon(Icons.Rounded.Link, contentDescription = null) },
-        Tab("浏览") { Icon(Icons.Rounded.PhotoLibrary, contentDescription = null) },
-        Tab("设置") { Icon(Icons.Rounded.Settings, contentDescription = null) },
+        Tab("杩炴帴") { Icon(Icons.Rounded.Link, contentDescription = null) },
+        Tab("娴忚") { Icon(Icons.Rounded.PhotoLibrary, contentDescription = null) },
+        Tab("璁剧疆") { Icon(Icons.Rounded.Settings, contentDescription = null) },
     )
 
     Box(Modifier.fillMaxSize().background(Ink)) {
@@ -104,6 +107,7 @@ fun AppRoot(repo: NikonLinkRepository) {
                         repo = repo,
                         onTutorial = { showTutorial = true },
                         onBrowse = { tabIndex = 1 },
+                        onRemote = { showRemote = true },
                     )
                     1 -> BrowseScreen(repo)
                     else -> SettingsScreen(repo)
@@ -122,6 +126,15 @@ fun AppRoot(repo: NikonLinkRepository) {
                 initialMode = connectMode,
                 onDismiss = { showTutorial = false },
             )
+        }
+
+        // Full-screen remote shutter, opened from the connected emblem.
+        AnimatedVisibility(
+            visible = showRemote,
+            enter = fadeIn(tween(220)) + slideInVertically(tween(260)) { height -> height / 14 },
+            exit = fadeOut(tween(160)) + slideOutVertically(tween(200)) { height -> height / 14 },
+        ) {
+            RemoteCaptureScreen(repo = repo, onClose = { showRemote = false })
         }
     }
 }
