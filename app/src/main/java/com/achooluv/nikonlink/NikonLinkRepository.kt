@@ -196,16 +196,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
             try {
                 val before = snapshotHandles()
                 Diagnostics.log("遥控拍摄：拍前 ${before.size} 个对象，最大 ${before.maxOrNull() ?: "-"}")
-                client.capture()
-                // The body needs a moment to flush the frame; poll instead of a
-                // single check so a slow write is not reported as a failure.
-                var fresh: Int? = null
-                for (attempt in 1..10) {
-                    delay(400)
-                    val now = snapshotHandles()
-                    fresh = now.filter { it !in before }.maxOrNull()
-                    Diagnostics.log("遥控拍摄：第 $attempt 次检查，共 ${now.size} 个，新增 ${now.count { it !in before }}")
-                    if (fresh != null) break
+                var fresh = shootAndWait(before, Ptp.NIKON_RELEASE_NORMAL, "普通释放")
+                if (fresh == null) {
+                    Diagnostics.log("普通释放没有产生照片，改用 AF+释放 重试")
+                    fresh = shootAndWait(before, Ptp.NIKON_RELEASE_AF, "AF+释放")
                 }
                 if (fresh != null) {
                     _lastShot.value = runCatching { client.thumbnail(fresh) }.getOrNull()
@@ -215,7 +209,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 } else {
                     _captureState.value = CaptureState.Failed
                     _captureNote.value = "相机没有写入新照片，检查挡位（M/A/P/S）与存储卡"
-                    Diagnostics.log("遥控拍摄：4 秒内没有新对象")
+                    Diagnostics.log("遥控拍摄：两种释放方式都没有产生新对象")
                 }
             } catch (e: Exception) {
                 _captureState.value = CaptureState.Failed
@@ -278,6 +272,29 @@ class NikonLinkRepository private constructor(private val app: Application) {
             }
             out
         }.getOrDefault(emptySet())
+    }
+
+    /**
+     * Fires one shutter release and waits up to ~3 s for a new object to appear.
+     * Returns the new handle, or null when the body accepted the command but wrote
+     * nothing (Auto mode, no card, or a remote-mode state that ignores release).
+     */
+    private suspend fun shootAndWait(before: Set<Int>, release: Int, label: String): Int? {
+        try {
+            client.capture(release = release)
+            Diagnostics.log("$label 指令已返回")
+        } catch (e: Exception) {
+            Diagnostics.log("$label 失败：${humanError(e)}")
+            return null
+        }
+        for (attempt in 1..7) {
+            delay(400)
+            val now = snapshotHandles()
+            val fresh = now.filter { it !in before }.maxOrNull()
+            Diagnostics.log("$label 第 $attempt 次检查：共 ${now.size} 个，新增 ${now.count { it !in before }}")
+            if (fresh != null) return fresh
+        }
+        return null
     }
 
 
