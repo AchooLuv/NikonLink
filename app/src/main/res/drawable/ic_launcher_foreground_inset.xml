@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive-icon foregrounds get masked down to the 66dp safe zone of the 108dp
+    canvas (about 61%). The artwork was drawn full-bleed, so circular / squircle
+    launchers clipped its edges. Insetting it by 8% keeps the camera, phone and
+    wordmark inside the safe zone and lets the yellow background show around them.
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_foreground"
+    android:inset="8%" />

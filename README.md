@@ -8,7 +8,7 @@
 
 [![Release](https://img.shields.io/github/v/release/AchooLuv/NikonLink?label=APK&color=FFCD00)](https://github.com/AchooLuv/NikonLink/releases/latest)
 [![Platform](https://img.shields.io/badge/Android-10%2B%20%C2%B7%20arm64-3DDC84)](#下载与安装)
-[![Kotlin](https://img.shields.io/badge/Kotlin-2.0-7F52FF)](#技术实现)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0-7F52FF)](docs/PROTOCOL.md)
 
 <p align="center">
   <img src="docs/screenshots/connect-idle.jpg" width="180" alt="连接页">
@@ -59,114 +59,10 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 
 要求：**Android 10 (API 29) 及以上，arm64-v8a**。APK 约 2.3 MB，不含任何广告或统计 SDK。
 
-## 连接步骤
+## 文档
 
-连接页顶部可以在两种模式间切换，选一次就会记住。
-
-### 相机热点（AP 模式）
-
-1. **相机**：`MENU → 网络菜单 → 连接至智能设备 → Wi-Fi 连接 → 建立连接`（其它 Z 机型在「设定菜单」，D 系列在「设定菜单 → Wi-Fi」）
-2. 记下相机屏幕上的 `NIKON_...` 网络名和 8 位密码
-3. **手机**：系统 Wi-Fi 里连上该网络（提示「无法访问互联网」时选**保持连接**），或回到 App 点「连接相机」输入 SSID/密码由 App 代连
-4. **App**：点「连接相机」，看到型号与电量即成功；随后在「浏览」里选文件下载
-
-### 同一 Wi-Fi（STA 模式）
-
-1. **相机**：`网络菜单 → 连接至智能设备 → Wi-Fi 连接（STA 模式）→ 建立配置`
-2. 给配置起名 → 选择家里的路由器 SSID → 输入 Wi-Fi 密码 → IP 选「自动获取」
-3. **手机**：连同一个路由器 Wi-Fi（不用连相机热点，手机仍可上网）
-4. **App**：模式切到「同一 Wi-Fi」→ 点「扫描并连接」；找不到就用「手动 IP」填相机在局域网里的地址
-
-> 同一时间只能有一个客户端连相机：请先完全退出 SnapBridge。
-
-## 机型支持
-
-| 模式 | 原理 | 支持的机型 |
-|---|---|---|
-| **AP**（相机热点） | 相机自己开热点，手机连上去，不依赖路由器 | 带 Wi-Fi 的 Z 系列（Z50 / Z50II / Z6 II / Z6 III / Z7 / Z7 II / Z8 / Z9 / Zf 等）以及 D 系列 Wi-Fi 机型 |
-| **STA**（同一 Wi-Fi） | 相机加入现有路由器或手机热点，手机在同一网络里通过局域网连它 | 菜单里出现「Wi-Fi 连接（STA 模式）」的机型，如 Z9（C 固件 5.00 起）、Z8、Z50II 等较新机型 |
-
-> 判断方法：相机菜单里能选到「Wi-Fi 连接（STA 模式）」就支持 STA；只有「Wi-Fi 连接」一项时用 AP 模式即可。两种模式共用同一套 PTP/IP 传输，功能没有差别。
-
-## 常见问题
-
-**连不上 / InitFail** — 相机被其它设备占用，关掉 SnapBridge 后重开相机 Wi-Fi。
-
-**相机不在 192.168.1.x 网段** — 「手动 SSID」里把相机 IP 填上（例如 `192.168.0.1`），App 会直接连这个地址。
-
-**STA 模式扫不到相机** — 多半是路由器开了「AP 隔离 / 客户端隔离」；确认相机和手机在同一个 SSID、同一网段，并临时关掉 VPN / 代理后重试，或者直接用「手动 IP」。
-
-**传输中自动断开** — 关闭手机「WLAN+ / 智能网络切换」，它会把没有互联网的相机网络切走。
-
-**相机一会儿就断** — 设定菜单里把「自动关机时间」调长；半按快门可唤醒。
-
-**RAW 没有缩略图** — 部分机型不对 NEF 返回缩略图，格子里会显示 `RAW` 占位，不影响完整下载。
-
-**下载一半失败** — 直接重试同一个文件，会从 `.part` 的断点继续。
-
-**手机里删了照片，App 还显示「已下载」** — 「已下载」是 App 自己的记录（按相机文件名与大小），不会跟着相册删除而变化。想重新取回时，直接在浏览页选中该文件再下载一次即可；也可以在「设置 → 存储 → 清除下载记录」后刷新列表。
-
-**遥控页按了快门相机没反应** — 先确认相机在 **M / A / P / S** 挡（AUTO 或其它场景模式下部分机型拒绝远程释放）。长曝光时相机会先做降噪、期间不响应指令，App 会等待并提示「已触发拍摄，长曝光/降噪可能要等几秒」。
-
-**连不上、想反馈** — 设置页 →「复制诊断信息」，把复制到的内容贴到 [Issues](https://github.com/AchooLuv/NikonLink/issues)，里面已包含相机型号、固件与最近的协议日志。
-
-## 技术实现
-
-- **PTP/IP（ISO 15740 over TCP，端口 15740）**：双 TCP 连接（命令/数据 + 事件），`Init_Command_Request/Ack`、`Init_Event_Request/Ack` 握手，`OpenSession` 后执行 PTP 事务
-- 用到的操作：`GetDeviceInfo`、`GetStorageIDs`、`GetObjectHandles`、`GetObjectInfo`、`GetThumb`、`GetPartialObject`，以及尼康厂商操作（配对、快门、事件队列、大缩略图，详见下表）
-- **流式传输**：按 PTP 包长度从 socket 直接读入 256 KiB 缓冲并写入 `RandomAccessFile`，单文件内存占用与文件大小无关
-- **STA 发现**：枚举手机自己的 IPv4 网段，48 路并发探测 `15740` 端口，失败可手动指定 IP；AP 模式则用 `WifiNetworkSpecifier` 加入相机热点
-- **断点续传**：`.part` 文件 + `GetPartialObject(handle, offset, 4 MiB)`，恢复时按 `.part` 长度定位
-- **稳定性**：`TCP_NODELAY`、4 MiB 接收缓冲、15 s 心跳、事件线程监测断链、指数退避重连、前台服务保活
-- **UI**：Jetpack Compose + Material 3，尼康黄（`#FFCD00`）单一强调色，深色底；R8 收缩后整包约 2.3 MB
-
-### 已验证的尼康厂商指令（Z50II，固件 C 1.11）
-
-配对、快门与取景均通过 PTP/IP 的厂商操作完成，参数以 libgphoto2 的
-[`ptp.h`](https://github.com/gphoto/libgphoto2/blob/master/camlibs/ptp2/ptp.h) 为准：
-
-| 指令 / 事件 | 参数 | 作用 | 状态 |
-|---|---|---|---|
-| `0x9439` | 9 / 13 | 进入 / 退出智能设备配对模式 | ✅ |
-| `0x952B` | 无 | 读取一次性配对码 | ✅ |
-| `0x935A` | `0x2001`（OK）/ `0x2002`（失败） | 完成配对，相机保存网络 | ✅ |
-| `0x9201` | 无 | StartLiveView | ✅ 返回 OK |
-| `0x90C2` | 1=交给主机 / 0=交还机身 | ChangeCameraMode | ✅ |
-| `0x9202` | 无 | EndLiveView（**不是** DeviceReady） | ✅ |
-| `0x9203` | 无 | GetLiveViewImage | ❌ 返回 `0xA00B`（`NotLiveView`） |
-| `0x90C7` | 无 | GetEvent：相机事件队列 | ✅ 见下方事件格式 |
-| 事件 `0xC101` | param1=句柄 | ObjectAddedInSDRAM | ✅ 遥控照片句柄来源 |
-| 事件 `0x4002` | param1=句柄 | ObjectAdded（卡） | ✅ 存卡照片句柄来源 |
-| `0x9207` | `0xFFFFFFFF`=不 AF / `0xFFFFFFFE`=先 AF；`0`=卡 / `1`=SDRAM | InitiateCaptureRecInMedia（快门） | ✅ 实测存卡成功 |
-| `0x90C0` | `0xFFFFFFFF` | InitiateCaptureRecInSdram | 备用（未采用） |
-| `0x90C8` | 无 | DeviceReady | ✅ |
-| `0x90C3` | 0=全部 / 句柄 | 删除 SDRAM 图像 | ✅ |
-| `0x9209` | 无 | 厂商存储 ID | 实测仅返回卡 |
-| `0x1016` | 属性码 + data-out | SetDevicePropValue（`0xD1A6` 取景选择器 = 0） | ✅ |
-| `0x9407` / `0x9408` | 3/0；无 | 「发送到智能设备」队列锁定 / 读取 | ✅ |
-| `0x90C4` | 句柄 | 大缩略图（约 1600×1200） | ✅ |
-
-**事件格式**：`0x90C7` 返回 `u16 事件数` + 每条 6 字节（`u16 code` + `u32 param1`）；
-`0xC101`/`0x4002` 的 param1 就是新照片的对象句柄，**不会**出现在 `GetObjectHandles` 里。
-
-**取景现状**：`0x90C2(1)` + `0x9201` 后 `LiveViewStatus(0xD1A2)=1`、`LiveViewProhibitCondition(0xD1A4)=0`，
-但 `0x9203` 始终不返回帧（`NotLiveView`）；短超时会读乱 PTP 流，因此当前版本不做取景。
-
-配对后相机改由本机身份（`NikonLink (Android)`）识别，无需每次重走连接向导。
-
-## 构建
-
-```bash
-# JDK 17 + Android SDK 35
-./gradlew :app:assembleRelease      # 产物：app/build/outputs/apk/release/app-release.apk
-./gradlew :app:testDebugUnitTest    # 51 项测试，含进程内假相机的 PTP/IP 回环测试
-```
-
-`keystore/nikonlink-release.jks` 为发布签名（口令写在 `app/build.gradle.kts`），用于让后续版本可以覆盖安装。
-
-## 协议致谢
-
-PTP/IP 传输与尼康厂商操作的细节参考了开源项目 [AeroShutter](https://github.com/subhashraveendran/aero-shutter)（MIT），本项目以自己的 Kotlin 实现重写。PTP 基础协议见 ISO 15740。
+- [使用指南：连接步骤、机型支持、常见问题](docs/USAGE.md)
+- [技术实现：PTP/IP 细节与已验证的尼康指令](docs/PROTOCOL.md)
 
 ## 免责声明
 
