@@ -26,6 +26,28 @@ class CameraWifi(private val context: Context) {
         private set
 
     private var callback: ConnectivityManager.NetworkCallback? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    /**
+     * Keeps the Wi-Fi radio awake while a PTP session is open. Screen-off otherwise
+     * lets the link sleep, the body keeps the stale session, and reconnects fail
+     * until the user toggles Wi-Fi.
+     */
+    fun acquireLock() {
+        val manager = context.getSystemService(WifiManager::class.java) ?: return
+        runCatching {
+            val lock = wifiLock ?: manager.createWifiLock(
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                "NikonLink:ptp",
+            ).also { wifiLock = it }
+            if (!lock.isHeld) lock.acquire()
+        }
+    }
+
+    fun releaseLock() {
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        wifiLock = null
+    }
 
     /** SSID the phone is currently associated with, or null. */
     fun currentSsid(): String? {

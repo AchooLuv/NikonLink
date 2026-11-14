@@ -26,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +56,9 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     val haptics = LocalHapticFeedback.current
 
     BackHandler { onClose() }
+    // Remote capture on Nikon bodies lives inside the live-view session: arm it on
+    // entry (0x9201 + 0x90C2 + 0x9202) and hand the body back on exit.
+    LaunchedEffect(Unit) { repo.beginRemote() }
     DisposableEffect(Unit) {
         onDispose {
             repo.endRemote()

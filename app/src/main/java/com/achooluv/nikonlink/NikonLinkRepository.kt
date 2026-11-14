@@ -287,7 +287,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
             Diagnostics.log("$label 失败：${humanError(e)}")
             return null
         }
-        for (attempt in 1..7) {
+        for (attempt in 1..20) {
             delay(400)
             val now = snapshotHandles()
             val fresh = now.filter { it !in before }.maxOrNull()
@@ -386,6 +386,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 _state.value = ConnState.Connecting("正在建立 PTP/IP 会话…")
                 Diagnostics.log("连接 $resolved:${Ptp.PORT}")
                 client.connect(resolved)
+                // Hold the Wi-Fi radio for the life of the session: without this,
+                // Doze/screen-off lets the link sleep and the body keeps the old
+                // session, so reconnects fail until Wi-Fi is toggled.
+                wifi.acquireLock()
                 _eventsSupported.value = client.eventsAvailable
 
                 _state.value = ConnState.Connecting("正在读取相机信息…")
@@ -511,6 +515,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
         keepAliveJob?.cancel()
         downloadJob?.cancel()
         ConnectionService.stop(app)
+        wifi.releaseLock()
         // Flip the UI immediately; the PTP CloseSession below is a network round trip.
         _state.value = ConnState.Idle
         _identity.value = null
@@ -576,6 +581,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
         reconnectJob = null
         keepAliveJob?.cancel()
         keepAliveJob = null
+        wifi.releaseLock()
         // Leave the busy state right away: scanner callbacks are silenced by the
         // cancelled job, and the socket teardown below runs in the background.
         _state.value = ConnState.Idle
