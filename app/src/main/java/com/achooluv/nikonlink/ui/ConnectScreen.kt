@@ -12,6 +12,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -101,16 +102,18 @@ fun ConnectScreen(
             StatusEmblem(state = state, onRemote = if (state is ConnState.Connected) onRemote else null)
         }
 
-        Spacer(Modifier.height(26.dp))
-        Text(
-            statusTitle(state),
-            modifier = Modifier.fillMaxWidth(),
-            color = if (state is ConnState.Error) Ember else Paper,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(if (connected) 18.dp else 26.dp))
+        if (!connected) {
+            Text(
+                statusTitle(state),
+                modifier = Modifier.fillMaxWidth(),
+                color = if (state is ConnState.Error) Ember else Paper,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(6.dp))
+        }
         Text(
             statusSubtitle(state, mode),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 36.dp),
@@ -134,37 +137,49 @@ fun ConnectScreen(
 
         Spacer(Modifier.height(22.dp))
         Column(Modifier.padding(horizontal = 20.dp)) {
-            Button(
-                onClick = {
-                    when {
-                        busy -> repo.cancelConnect()
-                        connected -> repo.disconnect()
-                        mode == ConnectMode.STA -> repo.connect(mode = mode)
-                        settings.lastSsid.isBlank() -> manualDialog = true
-                        else -> repo.connect(mode = mode)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-                shape = RoundedCornerShape(18.dp),
-                enabled = true,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (busy) NikonLinkTheme.colors.card else NikonYellow,
-                    contentColor = if (busy) Paper else Color(0xFF161200),
-                    disabledContainerColor = NikonYellowDim,
-                    disabledContentColor = PaperDim,
-                ),
-            ) {
-                if (connected) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("断开连接", fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(1.dp))
-                        Text(
-                            "断开后可切换模式",
-                            fontSize = 9.sp,
-                            color = Color(0xFF161200).copy(alpha = 0.62f),
-                        )
-                    }
-                } else {
+            if (connected) {
+                // Hand-rolled so the label sits dead-centre while the hint lives in
+                // the strip between it and the bottom edge (Button content is centred
+                // as a block, which caused the two lines to overlap).
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(NikonYellow)
+                        .clickable { repo.disconnect() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("断开连接", color = Color(0xFF161200), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "断开后可切换模式",
+                        color = Color(0xFF161200).copy(alpha = 0.62f),
+                        fontSize = 8.sp,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 2.dp),
+                    )
+                }
+            } else {
+                Button(
+                    onClick = {
+                        when {
+                            busy -> repo.cancelConnect()
+                            mode == ConnectMode.STA -> repo.connect(mode = mode)
+                            settings.lastSsid.isBlank() -> manualDialog = true
+                            else -> repo.connect(mode = mode)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    enabled = true,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (busy) NikonLinkTheme.colors.card else NikonYellow,
+                        contentColor = if (busy) Paper else Color(0xFF161200),
+                        disabledContainerColor = NikonYellowDim,
+                        disabledContentColor = PaperDim,
+                    ),
+                ) {
                     Text(
                         when {
                             state is ConnState.Reconnecting -> "停止重连"
