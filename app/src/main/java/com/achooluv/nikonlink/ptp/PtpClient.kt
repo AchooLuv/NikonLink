@@ -412,6 +412,9 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         release: Int = Ptp.NIKON_RELEASE_NORMAL,
         destination: Int = Ptp.NIKON_RELEASE_TO_CARD,
     ) {
+        // SnapBridge always arms the body first: DeviceReady(InitiateCaptureRecInMedia)
+        // reports 0xA200/0xA201/0xA207/0x2019 as "ready", so failures here are ignored.
+        runCatching { transaction(Ptp.OP_NIKON_DEVICE_READY_CAPTURE, IntArray(0)) }
         transaction(Ptp.OP_NIKON_CAPTURE_RELEASE, intArrayOf(release, destination))
     }
 

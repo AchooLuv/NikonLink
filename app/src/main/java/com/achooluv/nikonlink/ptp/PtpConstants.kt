@@ -77,6 +77,13 @@ object Ptp {
     /** Nikon vendor op: stop live view (0x9206). */
     const val OP_NIKON_END_LIVE_VIEW = 0x9206
 
+    /**
+     * Nikon vendor op: DeviceReady for InitiateCaptureRecInMedia (0x90C8). SnapBridge
+     * always sends this before 0x9207; without it the body accepts the release but
+     * does not actually expose.
+     */
+    const val OP_NIKON_DEVICE_READY_CAPTURE = 0x90C8
+
     // ---- Capture release parameters (op 0x9207) ------------------------------
     const val NIKON_RELEASE_AF = 0
     const val NIKON_RELEASE_NORMAL = 1
