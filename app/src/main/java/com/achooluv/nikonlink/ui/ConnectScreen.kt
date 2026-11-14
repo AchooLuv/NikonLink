@@ -52,12 +52,14 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -148,17 +150,44 @@ fun ConnectScreen(
                         .clip(RoundedCornerShape(18.dp))
                         .background(NikonYellow)
                         .clickable { repo.disconnect() },
-                    contentAlignment = Alignment.Center,
                 ) {
-                    Text("断开连接", color = Color(0xFF161200), fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        "断开后可切换模式",
-                        color = Color(0xFF161200).copy(alpha = 0.62f),
-                        fontSize = 8.sp,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 2.dp),
-                    )
+                    // Label sits dead-centre in the button; the hint is centred in the
+                    // strip between the label's bottom edge and the button's bottom.
+                    Layout(
+                        content = {
+                            Text(
+                                "断开连接",
+                                style = androidx.compose.ui.text.TextStyle(
+                                    color = Color(0xFF161200),
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                ),
+                            )
+                            Text(
+                                "断开后可切换模式",
+                                style = androidx.compose.ui.text.TextStyle(
+                                    color = Color(0xFF161200).copy(alpha = 0.62f),
+                                    fontSize = 9.sp,
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                ),
+                            )
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    ) { measurables, constraints ->
+                        val width = constraints.maxWidth
+                        val height = constraints.maxHeight
+                        val label = measurables[0].measure(Constraints(maxWidth = width))
+                        val hint = measurables[1].measure(Constraints(maxWidth = width))
+                        layout(width, height) {
+                            val labelTop = (height - label.height) / 2
+                            label.place((width - label.width) / 2, labelTop)
+                            val stripTop = labelTop + label.height
+                            // 1.5dp lift: CJK glyph ink sits slightly below its line box.
+                            val hintTop = stripTop + ((height - stripTop) - hint.height) / 2 - 1.5.dp.roundToPx()
+                            hint.place((width - hint.width) / 2, hintTop)
+                        }
+                    }
                 }
             } else {
                 Button(
@@ -461,7 +490,13 @@ private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
         else -> InkLine
     }
 
-    Box(Modifier.size(232.dp), contentAlignment = Alignment.Center) {
+    Box(
+        Modifier
+            .size(232.dp)
+            .clip(RoundedCornerShape(116.dp))
+            .clickable(enabled = connected && onRemote != null) { onRemote?.invoke() },
+        contentAlignment = Alignment.Center,
+    ) {
         Canvas(Modifier.fillMaxSize()) {
             val stroke = 7.dp.toPx()
             val d = size.minDimension - stroke
@@ -535,8 +570,6 @@ private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
         }
 
         Surface(
-            onClick = { onRemote?.invoke() },
-            enabled = onRemote != null,
             modifier = Modifier.size(150.dp).graphicsLayer { val s = 1f + 0.02f * beat; scaleX = s; scaleY = s },
             shape = RoundedCornerShape(75.dp),
             color = InkRaised,
