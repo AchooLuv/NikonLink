@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Matches the flat yellow in ic_launcher_foreground.png; a plain colour layer
-         fills the 108dp adaptive canvas edge-to-edge without the anti-aliased seam
-         a vector rectangle can leave under round masks. -->
-    <color name="ic_launcher_background">#FDE205</color>
-</resources>
