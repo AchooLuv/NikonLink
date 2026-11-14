@@ -194,20 +194,28 @@ class NikonLinkRepository private constructor(private val app: Application) {
             _captureState.value = CaptureState.Busy
             _captureNote.value = "正在拍摄…"
             try {
-                val before = newestHandle()
+                val before = snapshotHandles()
+                Diagnostics.log("遥控拍摄：拍前 ${before.size} 个对象，最大 ${before.maxOrNull() ?: "-"}")
                 client.capture()
-                delay(900)
-                val after = newestHandle()
-                Diagnostics.log("遥控拍摄：handle $before -> $after")
-                if (after != null && after != before) {
-                    _lastShot.value = runCatching { client.thumbnail(after) }.getOrNull()
+                // The body needs a moment to flush the frame; poll instead of a
+                // single check so a slow write is not reported as a failure.
+                var fresh: Int? = null
+                for (attempt in 1..10) {
+                    delay(400)
+                    val now = snapshotHandles()
+                    fresh = now.filter { it !in before }.maxOrNull()
+                    Diagnostics.log("遥控拍摄：第 $attempt 次检查，共 ${now.size} 个，新增 ${now.count { it !in before }}")
+                    if (fresh != null) break
+                }
+                if (fresh != null) {
+                    _lastShot.value = runCatching { client.thumbnail(fresh) }.getOrNull()
                     _captureState.value = CaptureState.Done
                     _captureNote.value = "已拍摄"
-                    Diagnostics.log("遥控拍摄成功，handle=$after")
+                    Diagnostics.log("遥控拍摄成功，handle=$fresh")
                 } else {
                     _captureState.value = CaptureState.Failed
                     _captureNote.value = "相机没有写入新照片，检查挡位（M/A/P/S）与存储卡"
-                    Diagnostics.log("遥控拍摄：没有检测到新对象")
+                    Diagnostics.log("遥控拍摄：4 秒内没有新对象")
                 }
             } catch (e: Exception) {
                 _captureState.value = CaptureState.Failed
@@ -261,17 +269,15 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
-    /** Highest object handle on any storage, used to detect that a shot landed. */
-    private suspend fun newestHandle(): Int? = withContext(Dispatchers.IO) {
+    /** All object handles on every storage; empty when the body refuses. */
+    private suspend fun snapshotHandles(): Set<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            var best: Int? = null
+            val out = HashSet<Int>()
             for (storage in client.storageIds()) {
-                for (handle in client.objectHandles(storage)) {
-                    if (best == null || handle > best) best = handle
-                }
+                client.objectHandles(storage).forEach { out.add(it) }
             }
-            best
-        }.getOrNull()
+            out
+        }.getOrDefault(emptySet())
     }
 
 
