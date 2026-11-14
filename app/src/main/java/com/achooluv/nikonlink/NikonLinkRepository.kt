@@ -198,6 +198,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 client.capture()
                 delay(900)
                 val after = newestHandle()
+                Diagnostics.log("遥控拍摄：handle $before -> $after")
                 if (after != null && after != before) {
                     _lastShot.value = runCatching { client.thumbnail(after) }.getOrNull()
                     _captureState.value = CaptureState.Done
@@ -250,9 +251,13 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     fun endRemote() {
+        // Only undo what beginRemote actually started; on a plain capture page the
+        // camera was never taken over, so touching live view here would disturb it.
+        if (_remote.value == RemoteState.Idle) return
         scope.launch {
             runCatching { client.stopLiveView() }
-            if (_remote.value != RemoteState.Failed) _remote.value = RemoteState.Idle
+            runCatching { client.returnToCamera() }
+            _remote.value = RemoteState.Idle
         }
     }
 

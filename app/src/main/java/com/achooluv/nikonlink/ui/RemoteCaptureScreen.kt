@@ -26,7 +26,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,12 +51,10 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     val identity by repo.identity.collectAsStateWithLifecycle()
     val capture by repo.captureState.collectAsStateWithLifecycle()
     val note by repo.captureNote.collectAsStateWithLifecycle()
-    val remote by repo.remote.collectAsStateWithLifecycle()
     val shot by repo.lastShot.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
 
     BackHandler { onClose() }
-    LaunchedEffect(Unit) { repo.beginRemote() }
     DisposableEffect(Unit) {
         onDispose {
             repo.endRemote()
@@ -117,18 +114,14 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                     )
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        when (remote) {
-                            NikonLinkRepository.RemoteState.Starting -> "正在接管相机…"
-                            NikonLinkRepository.RemoteState.Failed -> "遥控模式未开启"
-                            else -> "等待拍摄"
-                        },
+                        if (shot == null) "等待拍摄" else "刚拍摄",
                         color = Paper,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "相机已切到遥控模式；拍一张后这里会显示刚拍的照片。",
+                        "按快门后这里会显示刚拍的照片；取景画面还在开发中。",
                         color = NikonLinkTheme.colors.dim,
                         fontSize = 12.sp,
                         lineHeight = 18.sp,

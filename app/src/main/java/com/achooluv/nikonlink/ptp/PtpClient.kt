@@ -429,6 +429,11 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         runCatching { transaction(Ptp.OP_NIKON_END_LIVE_VIEW, IntArray(0)) }
     }
 
+    /** Hands live view back to the camera body (0x90C2 with 0). */
+    fun returnToCamera() {
+        runCatching { transaction(Ptp.OP_NIKON_CHANGE_CAMERA_MODE, intArrayOf(0)) }
+    }
+
     /**
      * Streams [length] bytes of object [handle] starting at [offset] into [sink].
      * Returns the byte count actually written (camera-reported when available).
