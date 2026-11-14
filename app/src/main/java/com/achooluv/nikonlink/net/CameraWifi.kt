@@ -37,7 +37,7 @@ class CameraWifi(private val context: Context) {
         val manager = context.getSystemService(WifiManager::class.java) ?: return
         runCatching {
             val lock = wifiLock ?: manager.createWifiLock(
-                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
                 "NikonLink:ptp",
             ).also { wifiLock = it }
             if (!lock.isHeld) lock.acquire()

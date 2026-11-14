@@ -101,23 +101,6 @@ fun Badge(text: String, filled: Boolean = false) {
     }
 }
 
-/** Slowly breathing halo used behind the connect emblem. */
-@Composable
-fun breathingAlpha(active: Boolean): Float {
-    if (!active) return 0.35f
-    val transition = rememberInfiniteTransition(label = "breath")
-    val alpha by transition.animateFloat(
-        initialValue = 0.18f,
-        targetValue = 0.42f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "alpha",
-    )
-    return alpha
-}
-
 /** Thin generic progress bar. */
 @Composable
 fun ThinProgress(fraction: Float, modifier: Modifier = Modifier) {
@@ -136,12 +119,6 @@ fun ThinProgress(fraction: Float, modifier: Modifier = Modifier) {
         )
     }
 }
-
-@Composable
-fun VerticalGap(height: Int) = Spacer(Modifier.height(height.dp))
-
-@Composable
-fun HorizontalGap(width: Int) = Spacer(Modifier.size(width.dp))
 
 @Composable
 fun ScreenHeader(title: String, subtitle: String? = null) {

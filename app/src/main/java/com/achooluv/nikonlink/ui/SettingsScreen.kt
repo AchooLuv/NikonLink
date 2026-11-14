@@ -34,7 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.OpenInNew
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -725,7 +725,7 @@ private fun AboutLink(label: String, value: String, onClick: () -> Unit) {
             modifier = Modifier.weight(1f),
         )
         Icon(
-            Icons.Rounded.OpenInNew,
+            Icons.AutoMirrored.Rounded.OpenInNew,
             contentDescription = "在浏览器打开",
             tint = PaperDim,
             modifier = Modifier.size(15.dp),

@@ -107,7 +107,6 @@ class LeInput(private val input: InputStream) {
 
 /** Reads/writes the 8-byte length+type prefix shared by every PTP/IP packet. */
 internal object Frame {
-    const val MAX_PAYLOAD = 16 * 1024 * 1024
 
     fun writePacket(out: OutputStream, type: Int, payload: ByteArray) {
         val header = ByteArray(Ptp.HEADER_SIZE)

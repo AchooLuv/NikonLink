@@ -20,7 +20,6 @@ object Ptp {
     const val PKT_EVENT = 8
     const val PKT_START_DATA = 9
     const val PKT_DATA = 10
-    const val PKT_CANCEL_TRANSACTION = 11
     const val PKT_END_DATA = 12
     const val PKT_PROBE_REQUEST = 13
     const val PKT_PROBE_RESPONSE = 14
@@ -100,7 +99,6 @@ object Ptp {
     /** No autofocus before the release. */
     const val NIKON_CAPTURE_NO_AF = -1
     /** Run autofocus, then release. */
-    const val NIKON_CAPTURE_AF_FIRST = -2
 
     // ---- Capture release parameters (op 0x9207) ------------------------------
     const val NIKON_RELEASE_TO_CARD = 0
@@ -127,10 +125,6 @@ object Ptp {
      * is in the event parameters and is NOT listed by GetObjectHandles.
      */
     const val EVENT_OBJECT_ADDED_IN_SDRAM = 0xC101
-    const val EVENT_OBJECT_REMOVED = 0x4003
-    const val EVENT_STORE_ADDED = 0x4004
-    const val EVENT_STORE_REMOVED = 0x4005
-    const val EVENT_CAPTURE_COMPLETE = 0x400D
 
     // ---- Object formats ------------------------------------------------------
     const val FORMAT_ASSOCIATION = 0x3001
@@ -143,7 +137,6 @@ object Ptp {
     const val PROP_BATTERY_LEVEL = 0x5001
 
     // ---- Storage selectors ---------------------------------------------------
-    const val ALL_STORAGES = 0xFFFFFFFF.toInt()
     const val ALL_FORMATS = 0
     const val ALL_HANDLES = 0
 }

@@ -52,8 +52,6 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     /** Transport-level hook used by the app to bind sockets to the camera's Wi-Fi network. */
     var socketFactory: SocketFactory = SocketFactory.getDefault()
 
-    val isConnected: Boolean get() = !closed && cmdSocket != null
-
     /** False when the body refused the event channel; downloads still work, events do not. */
     @Volatile
     var eventsAvailable: Boolean = false
@@ -422,10 +420,7 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     fun vendorStorageIds(): IntArray =
         Datasets.uint32Array(collect(Ptp.OP_NIKON_GET_VENDOR_STORAGE_IDS, IntArray(0)))
 
-    /** Frees one SDRAM image after it was read; keeps the small buffer from filling. */
-    fun deleteSdramImage(handle: Int) {
-        runCatching { transaction(Ptp.OP_NIKON_DELETE_SDRAM_IMAGE, intArrayOf(handle)) }
-    }
+
 
     /** Raw 0x90C7 payload; the camera may queue events here instead of the socket. */
     fun getEventRaw(): ByteArray = collect(Ptp.OP_NIKON_GET_EVENT, IntArray(0))
@@ -467,10 +462,7 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
      * Puts the body into smart-device remote mode, in the order libgphoto2 uses:
      * ChangeCameraMode first, then StartLiveView.
      */
-    fun startLiveView() {
-        transaction(Ptp.OP_NIKON_CHANGE_CAMERA_MODE, intArrayOf(1))
-        transaction(Ptp.OP_NIKON_START_LIVE_VIEW, IntArray(0))
-    }
+
 
     /** Individual steps so the caller can log which one the body rejects. */
     fun changeCameraMode(mode: Int) {
