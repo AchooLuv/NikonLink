@@ -38,6 +38,7 @@ object Ptp {
     const val OP_GET_OBJECT = 0x1009
     const val OP_GET_THUMB = 0x100A
     const val OP_GET_DEVICE_PROP_VALUE = 0x1015
+    const val OP_SET_DEVICE_PROP_VALUE = 0x1016
     const val OP_GET_PARTIAL_OBJECT = 0x101B
 
     /** Nikon vendor op: larger (~640px) JPEG preview. Optional per body. */
@@ -89,6 +90,15 @@ object Ptp {
 
     /** Nikon vendor op: storage IDs including the SDRAM slot that holds remote shots. */
     const val OP_NIKON_GET_VENDOR_STORAGE_IDS = 0x9209
+
+    /** Nikon vendor op: pull one queued event (0x90C7). Modern bodies use this. */
+    const val OP_NIKON_GET_EVENT = 0x90C7
+
+    /** Nikon vendor op: one JPEG frame of live view (0x9203). */
+    const val OP_NIKON_GET_LIVE_VIEW_IMAGE = 0x9203
+
+    /** Nikon vendor op: AF capture straight to SDRAM, no parameters (0x90CB). */
+    const val OP_NIKON_AF_CAPTURE_SDRAM = 0x90CB
 
     /** Nikon vendor op: delete an SDRAM image (0x0 clears all) to free the buffer. */
     const val OP_NIKON_DELETE_SDRAM_IMAGE = 0x90C3

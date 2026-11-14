@@ -125,20 +125,32 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 配对、快门与取景均通过 PTP/IP 的厂商操作完成，参数以 libgphoto2 的
 [`ptp.h`](https://github.com/gphoto/libgphoto2/blob/master/camlibs/ptp2/ptp.h) 为准：
 
-| 指令 | 参数 | 作用 | 状态 |
+| 指令 / 事件 | 参数 | 作用 | 状态 |
 |---|---|---|---|
 | `0x9439` | 9 / 13 | 进入 / 退出智能设备配对模式 | ✅ |
 | `0x952B` | 无 | 读取一次性配对码 | ✅ |
 | `0x935A` | `0x2001`（OK）/ `0x2002`（失败） | 完成配对，相机保存网络 | ✅ |
-| `0x9201` | 无 | StartLiveView | ✅ |
+| `0x9201` | 无 | StartLiveView | ✅ 返回 OK |
 | `0x90C2` | 1=交给主机 / 0=交还机身 | ChangeCameraMode | ✅ |
 | `0x9202` | 无 | EndLiveView（**不是** DeviceReady） | ✅ |
-| `0x9203` | 无 | GetLiveViewImage | ⚠️ 返回 `0xA00B` 帧未就绪 |
+| `0x9203` | 无 | GetLiveViewImage | ❌ 返回 `0xA00B`（`NotLiveView`） |
+| `0x90C7` | 无 | GetEvent：相机事件队列 | ✅ 见下方事件格式 |
+| 事件 `0xC101` | param1=句柄 | ObjectAddedInSDRAM | ✅ 遥控照片句柄来源 |
+| 事件 `0x4002` | param1=句柄 | ObjectAdded（卡） | ✅ 存卡照片句柄来源 |
+| `0x9207` | `0xFFFFFFFF`=不 AF / `0xFFFFFFFE`=先 AF；`0`=卡 / `1`=SDRAM | InitiateCaptureRecInMedia（快门） | ✅ 实测存卡成功 |
+| `0x90C0` | `0xFFFFFFFF` | InitiateCaptureRecInSdram | 备用（未采用） |
 | `0x90C8` | 无 | DeviceReady | ✅ |
-| `0x9207` | `0xFFFFFFFF`=不 AF / `0xFFFFFFFE`=先 AF；`1`=SDRAM / `0`=卡 | InitiateCaptureRecInMedia（快门） | ✅ 指令被接受 |
-| `0x9209` | 无 | 厂商存储 ID（含 SDRAM） | 用于查找 SDRAM 中的照片 |
+| `0x90C3` | 0=全部 / 句柄 | 删除 SDRAM 图像 | ✅ |
+| `0x9209` | 无 | 厂商存储 ID | 实测仅返回卡 |
+| `0x1016` | 属性码 + data-out | SetDevicePropValue（`0xD1A6` 取景选择器 = 0） | ✅ |
 | `0x9407` / `0x9408` | 3/0；无 | 「发送到智能设备」队列锁定 / 读取 | ✅ |
-| `0x90C4` | 句柄 | 大缩略图 | ✅ |
+| `0x90C4` | 句柄 | 大缩略图（约 1600×1200） | ✅ |
+
+**事件格式**：`0x90C7` 返回 `u16 事件数` + 每条 6 字节（`u16 code` + `u32 param1`）；
+`0xC101`/`0x4002` 的 param1 就是新照片的对象句柄，**不会**出现在 `GetObjectHandles` 里。
+
+**取景现状**：`0x90C2(1)` + `0x9201` 后 `LiveViewStatus(0xD1A2)=1`、`LiveViewProhibitCondition(0xD1A4)=0`，
+但 `0x9203` 始终不返回帧（`NotLiveView`）；短超时会读乱 PTP 流，因此当前版本不做取景。
 
 配对后相机改由本机身份（`NikonLink (Android)`）识别，无需每次重走连接向导。
 

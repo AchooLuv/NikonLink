@@ -13,6 +13,7 @@ import com.achooluv.nikonlink.net.LanScanner
 import com.achooluv.nikonlink.ptp.Ptp
 import com.achooluv.nikonlink.ptp.PtpEvent
 import com.achooluv.nikonlink.ptp.PtpIpClient
+import com.achooluv.nikonlink.ptp.parseNikonEvents
 import com.achooluv.nikonlink.service.ConnectionService
 import com.achooluv.nikonlink.transfer.CameraDiscovery
 import com.achooluv.nikonlink.transfer.Downloader
@@ -200,20 +201,37 @@ class NikonLinkRepository private constructor(private val app: Application) {
             _captureState.value = CaptureState.Busy
             _captureNote.value = "正在拍摄…"
             try {
-                logStorages()
-                val before = snapshotHandles()
+                // No handle census before the shot: it costs 1-2 s on a full card.
+                val before = emptySet<Int>()
                 Diagnostics.log("遥控拍摄：拍前 ${before.size} 个对象，最大 ${before.maxOrNull() ?: "-"}")
-                var fresh = shootAndWait(before, Ptp.NIKON_CAPTURE_NO_AF, "不AF·存SDRAM")
-                if (fresh == null) {
-                    Diagnostics.log("不AF 没有产生照片，改用先AF 重试")
-                    fresh = shootAndWait(before, Ptp.NIKON_CAPTURE_AF_FIRST, "先AF·存SDRAM")
+                var fresh: Int? = null
+                val attempts = listOf<Pair<String, () -> Unit>>(
+                    "0x9207 存卡" to { client.capture(release = Ptp.NIKON_CAPTURE_NO_AF, destination = Ptp.NIKON_RELEASE_TO_CARD) },
+                    "0x9207 存SDRAM" to { client.capture(release = Ptp.NIKON_CAPTURE_NO_AF, destination = Ptp.NIKON_RELEASE_TO_SDRAM) },
+                    "0x90C0 拍SDRAM" to { client.captureSdram() },
+                )
+                for ((label, send) in attempts) {
+                    fresh = shootAndWait(before, label, send)
+                    if (fresh != null) break
                 }
                 if (fresh != null) {
-                    _lastShot.value = runCatching { client.thumbnail(fresh) }.getOrNull()
-                    runCatching { client.deleteSdramImage(fresh) }
+                    // Show the small thumbnail immediately (fast), then swap in the
+                    // large one in the background so the page is not waiting on 0x90C4.
                     _captureState.value = CaptureState.Done
                     _captureNote.value = "已拍摄"
+                    _lastShot.value = runCatching { client.thumbnail(fresh) }.getOrNull()
                     Diagnostics.log("遥控拍摄成功，handle=$fresh")
+                    val handle = fresh
+                    scope.launch {
+                        repeat(3) {
+                            val big = runCatching { client.largeThumbnail(handle) }.getOrNull()
+                            if (big != null) {
+                                _lastShot.value = big
+                                return@launch
+                            }
+                            delay(300)
+                        }
+                    }
                 } else {
                     _captureState.value = CaptureState.Failed
                     _captureNote.value = "相机没有写入新照片，检查挡位（M/A/P/S）与存储卡"
@@ -248,6 +266,35 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val _lastShot = MutableStateFlow<ByteArray?>(null)
     val lastShot: StateFlow<ByteArray?> = _lastShot
 
+    /** Latest live-view JPEG while the remote page is open. */
+    private val _preview = MutableStateFlow<ByteArray?>(null)
+    val preview: StateFlow<ByteArray?> = _preview
+
+    private var liveViewJob: Job? = null
+
+    private fun startLiveViewPolling() {
+        liveViewJob?.cancel()
+        liveViewJob = scope.launch {
+            Diagnostics.log("开始取景轮询 0x9203")
+            var failures = 0
+            while (true) {
+                val frame = runCatching { client.liveViewImage(timeoutMs = 1_500) }.getOrNull()
+                if (frame != null && frame.size > 1000) {
+                    _preview.value = frame
+                    if (failures > 0) Diagnostics.log("取景恢复，帧 ${frame.size} 字节")
+                    failures = 0
+                } else {
+                    failures++
+                    if (failures <= 3) {
+                        Diagnostics.log("取景帧为空（第 $failures 次），长度=${frame?.size ?: 0}")
+                    }
+                    if (failures == 12) Diagnostics.log("取景帧持续不可用（0x9203 未就绪）")
+                }
+                delay(80)
+            }
+        }
+    }
+
     fun beginRemote() {
         if (_state.value !is ConnState.Connected) {
             _remote.value = RemoteState.Failed
@@ -256,9 +303,23 @@ class NikonLinkRepository private constructor(private val app: Application) {
         scope.launch {
             _remote.value = RemoteState.Starting
             try {
-                client.startLiveView()
+                runCatching { client.deleteAllSdram() }
+                val prohibit = runCatching { client.liveViewProhibit() }.getOrNull()
+                Diagnostics.log("LiveViewProhibit=0x${prohibit?.toString(16) ?: "?"}")
+                val mode = runCatching { client.changeCameraMode(1) }
+                Diagnostics.log("0x90C2(1) ChangeCameraMode -> ${mode.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
+                // SnapBridge sets LiveViewSelector to STILL_IMAGE before starting LV.
+                val selector = runCatching { client.writeProp(0xD1A6, byteArrayOf(0)) }
+                Diagnostics.log("0xD1A6=0 LiveViewSelector -> ${selector.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
+                val lv = runCatching { client.startLiveViewOnly() }
+                Diagnostics.log("0x9201 StartLiveView -> ${lv.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
+                delay(500)
+                val status = runCatching { client.readPropByte(0xD1A2) }.getOrDefault(-1)
+                Diagnostics.log("LiveViewStatus 0xD1A2=$status")
                 _remote.value = RemoteState.Ready
-                Diagnostics.log("遥控模式已开启")
+                // Live-view frame polling is disabled for now: 0x9203 can stay
+                // unanswered and a short socket timeout desyncs the PTP stream,
+                // which then kills the whole session.
             } catch (e: Exception) {
                 _remote.value = RemoteState.Failed
                 Diagnostics.log("遥控模式开启失败：${humanError(e)}")
@@ -270,6 +331,9 @@ class NikonLinkRepository private constructor(private val app: Application) {
         // Only undo what beginRemote actually started; on a plain capture page the
         // camera was never taken over, so touching live view here would disturb it.
         if (_remote.value == RemoteState.Idle) return
+        liveViewJob?.cancel()
+        liveViewJob = null
+        _preview.value = null
         scope.launch {
             runCatching { client.stopLiveView() }
             runCatching { client.returnToCamera() }
@@ -303,36 +367,39 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     /**
-     * Fires one shutter release and waits for the camera to report the new SDRAM
-     * object. Nikon delivers that handle through event 0xC101, not GetObjectHandles.
+     * Fires one shutter release and then pulls events with 0x90C7 (modern Nikon
+     * bodies queue ObjectAddedInSDRAM there). Returns the new handle or null.
      */
-    private suspend fun shootAndWait(before: Set<Int>, release: Int, label: String): Int? {
+    private suspend fun shootAndWait(before: Set<Int>, label: String, send: () -> Unit): Int? {
         val latch = CompletableDeferred<Int?>()
         sdramLatch = latch
         try {
-            client.capture(release = release)
+            send()
             Diagnostics.log("$label 指令已返回")
         } catch (e: Exception) {
             Diagnostics.log("$label 失败：${humanError(e)}")
             return null
         }
-        val fromEvent = withTimeoutOrNull(7_000) { latch.await() }
-        if (fromEvent != null) {
-            Diagnostics.log("$label 收到 SDRAM 照片 handle=$fromEvent")
-            return fromEvent
-        }
-        // Fallback: some bodies also expose the shot in a normal storage.
-        for (attempt in 1..8) {
+        repeat(12) {
             delay(400)
-            val now = snapshotHandles()
-            val fresh = now.filter { it !in before }.maxOrNull()
-            if (fresh != null) {
-                Diagnostics.log("$label 句柄列表发现新对象 $fresh（第 $attempt 次）")
-                return fresh
+            if (latch.isCompleted) latch.await()?.let { return it }
+            val raw = runCatching { client.getEventRaw() }.getOrNull()
+            if (raw != null && raw.isNotEmpty()) {
+                val events = parseNikonEvents(raw)
+                val summary = events.joinToString(" ") { "0x${it.first.toString(16)}:${it.second}" }
+                Diagnostics.log("$label 0x90C7 事件 [$summary]")
+                val maxBefore = before.maxOrNull() ?: 0
+                val candidates = events
+                    .map { it.second }
+                    .filter { it > maxBefore }
+                candidates.maxOrNull()?.let { return it }
             }
         }
-        Diagnostics.log("$label 7 秒内没有 SDRAM 事件也没有新句柄")
-        return null
+        // Last resort: the shot may also show up in a normal storage.
+        val now = snapshotHandles()
+        val fresh = now.filter { it !in before }.maxOrNull()
+        if (fresh != null) Diagnostics.log("$label 句柄列表发现新对象 $fresh")
+        return fresh
     }
 
 

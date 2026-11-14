@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -53,6 +54,7 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     val capture by repo.captureState.collectAsStateWithLifecycle()
     val note by repo.captureNote.collectAsStateWithLifecycle()
     val shot by repo.lastShot.collectAsStateWithLifecycle()
+    val previewFrame by repo.preview.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
 
     BackHandler { onClose() }
@@ -67,6 +69,9 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     }
 
     val busy = capture == NikonLinkRepository.CaptureState.Busy
+    val live = previewFrame?.let { bytes ->
+        runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull()
+    }
     val preview = shot?.let { bytes ->
         runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull()
     }
@@ -95,21 +100,34 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
         }
 
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-            if (preview != null) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Image(
-                        bitmap = preview.asImageBitmap(),
-                        contentDescription = "刚拍摄的照片",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
+            when {
+                live != null -> Image(
+                    bitmap = live.asImageBitmap(),
+                    contentDescription = "实时取景",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+                )
+                preview != null -> Column(
+                    Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box(
+                        Modifier
                             .fillMaxWidth()
+                            .aspectRatio(3f / 2f)
                             .clip(RoundedCornerShape(12.dp)),
-                    )
+                    ) {
+                        Image(
+                            bitmap = preview.asImageBitmap(),
+                            contentDescription = "刚拍摄的照片",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     Spacer(Modifier.height(10.dp))
                     Text("刚拍摄", color = NikonLinkTheme.colors.dim, fontSize = 11.sp)
                 }
-            } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
                         Icons.Rounded.PhotoCamera,
                         contentDescription = null,

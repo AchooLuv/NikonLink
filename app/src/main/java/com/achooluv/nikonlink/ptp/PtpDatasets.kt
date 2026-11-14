@@ -213,6 +213,29 @@ internal fun parsePairingCode(data: ByteArray): String {
     return digits.joinToString("")
 }
 
+/**
+ * Decodes the payload of Nikon's GetEvent (0x90C7): a u16 event count followed by
+ * 6-byte records (u16 code + u32 param1). The SDRAM photo handle arrives as
+ * `0xC101` with the handle in param1.
+ */
+internal fun parseNikonEvents(data: ByteArray): List<Pair<Int, Int>> {
+    if (data.size < 2) return emptyList()
+    val count = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+    val out = ArrayList<Pair<Int, Int>>()
+    var offset = 2
+    repeat(count) {
+        if (offset + 6 > data.size) return@repeat
+        val code = (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
+        val param = (data[offset + 2].toInt() and 0xFF) or
+            ((data[offset + 3].toInt() and 0xFF) shl 8) or
+            ((data[offset + 4].toInt() and 0xFF) shl 16) or
+            ((data[offset + 5].toInt() and 0xFF) shl 24)
+        out.add(code to param)
+        offset += 6
+    }
+    return out
+}
+
 private val PTP_DATE = Regex("""^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})""")
 
 /** Parses "YYYYMMDDThhmmss" as local time. */

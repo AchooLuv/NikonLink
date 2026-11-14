@@ -427,13 +427,78 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         runCatching { transaction(Ptp.OP_NIKON_DELETE_SDRAM_IMAGE, intArrayOf(handle)) }
     }
 
+    /** Raw 0x90C7 payload; the camera may queue events here instead of the socket. */
+    fun getEventRaw(): ByteArray = collect(Ptp.OP_NIKON_GET_EVENT, IntArray(0))
+
+    /** One live-view JPEG frame (0x9203). Throws when the body has no frame ready. */
+    fun liveViewImage(): ByteArray = collect(Ptp.OP_NIKON_GET_LIVE_VIEW_IMAGE, IntArray(0))
+
     /**
-     * Puts the body into smart-device remote mode: live view on the camera, then
-     * handed to the host. The camera screen switches to "已连接到智能设备".
+     * One live-view frame with a short read timeout. The body can leave 0x9203
+     * unanswered until a frame exists; the default 45 s socket timeout would stall
+     * the whole polling loop, so temporarily drop it to [timeoutMs].
+     */
+    fun liveViewImage(timeoutMs: Int): ByteArray {
+        val socket = cmdSocket
+        val previous = socket?.soTimeout ?: 45_000
+        runCatching { socket?.soTimeout = timeoutMs }
+        try {
+            return liveViewImage()
+        } finally {
+            runCatching { socket?.soTimeout = previous }
+        }
+    }
+
+    /** LiveViewProhibitCondition (0xD1A4): bit 12 means a stale SDRAM shot blocks LV. */
+    fun liveViewProhibit(): Int? {
+        val data = collect(Ptp.OP_GET_DEVICE_PROP_VALUE, intArrayOf(0xD1A4))
+        if (data.size < 4) return null
+        return (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8) or
+            ((data[2].toInt() and 0xFF) shl 16) or ((data[3].toInt() and 0xFF) shl 24)
+    }
+
+    /** Reads one device property and returns its first byte (0 when absent). */
+    fun readPropByte(code: Int): Int {
+        val data = collect(Ptp.OP_GET_DEVICE_PROP_VALUE, intArrayOf(code))
+        return if (data.isNotEmpty()) data[0].toInt() and 0xFF else -1
+    }
+
+    /** Writes a device property with the PTP data-out phase (value in the END packet). */
+    fun writeProp(code: Int, value: ByteArray) {
+        transaction(Ptp.OP_SET_DEVICE_PROP_VALUE, intArrayOf(code), dataOut = value)
+    }
+
+    /** Clears every SDRAM image (0x90C3 with 0); frees the LV block. */
+    fun deleteAllSdram() {
+        runCatching { transaction(Ptp.OP_NIKON_DELETE_SDRAM_IMAGE, intArrayOf(0)) }
+    }
+
+    /** 0x90C0(0xFFFFFFFF): capture straight to SDRAM without autofocus. */
+    fun captureSdram() {
+        transaction(Ptp.OP_NIKON_CAPTURE_TO_SDRAM, intArrayOf(-1))
+    }
+
+    /** 0x90CB: AF capture straight to SDRAM, no parameters. */
+    fun afCaptureSdram() {
+        transaction(Ptp.OP_NIKON_AF_CAPTURE_SDRAM, IntArray(0))
+    }
+
+    /**
+     * Puts the body into smart-device remote mode, in the order libgphoto2 uses:
+     * ChangeCameraMode first, then StartLiveView.
      */
     fun startLiveView() {
-        transaction(Ptp.OP_NIKON_START_LIVE_VIEW, IntArray(0))
         transaction(Ptp.OP_NIKON_CHANGE_CAMERA_MODE, intArrayOf(1))
+        transaction(Ptp.OP_NIKON_START_LIVE_VIEW, IntArray(0))
+    }
+
+    /** Individual steps so the caller can log which one the body rejects. */
+    fun changeCameraMode(mode: Int) {
+        transaction(Ptp.OP_NIKON_CHANGE_CAMERA_MODE, intArrayOf(mode))
+    }
+
+    fun startLiveViewOnly() {
+        transaction(Ptp.OP_NIKON_START_LIVE_VIEW, IntArray(0))
     }
 
     /** Ends remote mode: 0x9202 is EndLiveView (not DeviceReady). */
