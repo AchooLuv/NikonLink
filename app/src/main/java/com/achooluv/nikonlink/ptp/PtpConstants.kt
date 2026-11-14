@@ -84,6 +84,18 @@ object Ptp {
      */
     const val OP_NIKON_DEVICE_READY_CAPTURE = 0x90C8
 
+    /** Nikon vendor op: capture straight to SDRAM, one param (0xFFFFFFFF = no AF). */
+    const val OP_NIKON_CAPTURE_TO_SDRAM = 0x90C0
+
+    /** Nikon vendor op: storage IDs including the SDRAM slot that holds remote shots. */
+    const val OP_NIKON_GET_VENDOR_STORAGE_IDS = 0x9209
+
+    // ---- 0x9207 parameters (see libgphoto2 ptp.h) ---------------------------
+    /** No autofocus before the release. */
+    const val NIKON_CAPTURE_NO_AF = -1
+    /** Run autofocus, then release. */
+    const val NIKON_CAPTURE_AF_FIRST = -2
+
     // ---- Capture release parameters (op 0x9207) ------------------------------
     const val NIKON_RELEASE_AF = 0
     const val NIKON_RELEASE_NORMAL = 1

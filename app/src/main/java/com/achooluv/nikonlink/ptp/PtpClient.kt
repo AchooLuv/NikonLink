@@ -409,14 +409,18 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
      * the body exposes; the caller runs it off the main thread.
      */
     fun capture(
-        release: Int = Ptp.NIKON_RELEASE_NORMAL,
-        destination: Int = Ptp.NIKON_RELEASE_TO_CARD,
+        release: Int = Ptp.NIKON_CAPTURE_NO_AF,
+        destination: Int = Ptp.NIKON_RELEASE_TO_SDRAM,
     ) {
-        // SnapBridge always arms the body first: DeviceReady(InitiateCaptureRecInMedia)
-        // reports 0xA200/0xA201/0xA207/0x2019 as "ready", so failures here are ignored.
+        // SnapBridge arms the body first; DeviceReady may answer 0xA200/0xA201/0xA207,
+        // which all mean "ready", so a failure here is not fatal.
         runCatching { transaction(Ptp.OP_NIKON_DEVICE_READY_CAPTURE, IntArray(0)) }
         transaction(Ptp.OP_NIKON_CAPTURE_RELEASE, intArrayOf(release, destination))
     }
+
+    /** Storage IDs including the SDRAM slot; remote captures land there. */
+    fun vendorStorageIds(): IntArray =
+        Datasets.uint32Array(collect(Ptp.OP_NIKON_GET_VENDOR_STORAGE_IDS, IntArray(0)))
 
     /**
      * Puts the body into smart-device remote mode: live view on the camera, then
@@ -427,7 +431,7 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         transaction(Ptp.OP_NIKON_CHANGE_CAMERA_MODE, intArrayOf(1))
     }
 
-    /** Ends remote mode. Best effort: the session may already be gone. */
+    /** Ends remote mode: 0x9202 is EndLiveView (not DeviceReady). */
     fun stopLiveView() {
         runCatching { transaction(Ptp.OP_NIKON_END_LIVE_VIEW, IntArray(0)) }
     }

@@ -196,10 +196,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
             try {
                 val before = snapshotHandles()
                 Diagnostics.log("遥控拍摄：拍前 ${before.size} 个对象，最大 ${before.maxOrNull() ?: "-"}")
-                var fresh = shootAndWait(before, Ptp.NIKON_RELEASE_NORMAL, "普通释放")
+                var fresh = shootAndWait(before, Ptp.NIKON_CAPTURE_NO_AF, "不AF·存SDRAM")
                 if (fresh == null) {
-                    Diagnostics.log("普通释放没有产生照片，改用 AF+释放 重试")
-                    fresh = shootAndWait(before, Ptp.NIKON_RELEASE_AF, "AF+释放")
+                    Diagnostics.log("不AF 没有产生照片，改用先AF 重试")
+                    fresh = shootAndWait(before, Ptp.NIKON_CAPTURE_AF_FIRST, "先AF·存SDRAM")
                 }
                 if (fresh != null) {
                     _lastShot.value = runCatching { client.thumbnail(fresh) }.getOrNull()
@@ -215,6 +215,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 _captureState.value = CaptureState.Failed
                 _captureNote.value = "拍摄失败：${humanError(e)}"
                 Diagnostics.log("遥控拍摄失败：${humanError(e)}")
+            } finally {
+                // Never leave the button stuck on "拍摄中" if something cancelled us.
+                if (_captureState.value == CaptureState.Busy) {
+                    _captureState.value = CaptureState.Failed
+                    _captureNote.value = "拍摄超时，请重试"
+                }
             }
         }
     }
@@ -263,12 +269,15 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
-    /** All object handles on every storage; empty when the body refuses. */
+    /** All object handles on every storage (card and SDRAM); empty when the body refuses. */
     private suspend fun snapshotHandles(): Set<Int> = withContext(Dispatchers.IO) {
         runCatching {
             val out = HashSet<Int>()
-            for (storage in client.storageIds()) {
-                client.objectHandles(storage).forEach { out.add(it) }
+            val storages = HashSet<Int>()
+            client.storageIds().forEach { storages.add(it) }
+            runCatching { client.vendorStorageIds().forEach { storages.add(it) } }
+            for (storage in storages) {
+                runCatching { client.objectHandles(storage) }.getOrNull()?.forEach { out.add(it) }
             }
             out
         }.getOrDefault(emptySet())
@@ -432,7 +441,13 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 settings.setHost(mode, resolved)
 
                 _state.value = ConnState.Connected(info.model.ifBlank { "Nikon 相机" })
-                ConnectionService.start(app, "已连接 ${info.model.ifBlank { "Nikon 相机" }} · 可传输")
+                // Android 12+ forbids starting a foreground service from the
+                // background (screen-off reconnect). Never let that crash the app.
+                runCatching {
+                    ConnectionService.start(app, "已连接 ${info.model.ifBlank { "Nikon 相机" }} · 可传输")
+                }.onFailure {
+                    Diagnostics.log("前台服务启动被拒：${it.javaClass.simpleName}")
+                }
                 startKeepAlive()
                 refreshLibrary()
                 if (settings.autoPull.value) syncAutoPullBaseline()
