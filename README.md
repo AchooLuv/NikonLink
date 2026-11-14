@@ -90,10 +90,6 @@
 
 ---
 
-## 免责声明
-
-非尼康官方产品，与尼康公司无关联。使用前请自行确认相机固件已开启 Wi-Fi 功能；因使用本工具造成的任何数据或设备问题由使用者自行承担。
-
 ## 关键词
 
 尼康图传 · 尼康无线图传 App · Nikon 相机传照片到手机 · Z50II 图传 · 尼康相机 Wi-Fi 传图 · 尼康 STA 模式 · 相机接入路由器传图 · SnapBridge 替代 · PTP/IP Android 客户端 · NEF/RAW 下载 · 断点续传 · Kotlin Compose · Nikon wireless tethering · Nikon camera photo transfer · Z-series photo transfer
