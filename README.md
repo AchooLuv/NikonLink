@@ -19,21 +19,22 @@
 
 ## 它解决什么
 
-SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要电脑。NikonLink 只做一件事：**把相机的照片、视频和 RAW 稳定地搬到手机里**，顺便把连接这一步做到尽量少点几下。
+SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要电脑。NikonLink 核心是把相机的照片、视频和 RAW 稳定地搬到手机里，连接这一步尽量少点几下；连上之后还能用手机当遥控快门。
 
 - 🎯 目标机型：**Nikon Z50II（Z 系列）**；共用 PTP/IP 的尼康 Wi-Fi 机型（Z50 / Z6 / Z7 / D5300 / D5600 / D750 / D850 等）同样适用
 - 🔗 两种连接方式：**相机热点（AP）** 直接连相机；**同一 Wi-Fi（STA）** 让相机加入路由器，手机在同一网络里连它，还能正常上网
-- 📱 手机端只需连接、浏览、设置三个页面
+- 📱 手机端三个主页面（连接 / 浏览 / 设置）+ 一个遥控拍摄页
 - 🖼️ JPEG 直接预览；**RAW（NEF）原样完整下载**，App 内不解码，预览统一用相机内嵌 JPEG 缩略图
 - 📦 视频、RAW 大文件走 **4 MiB 分块 + 流式写盘**，内存占用恒定，不会 OOM
 - ⏯️ **断点续传**：中断后重新下载，从已写入的字节继续
 - 📸 **拍摄后自动拉取**（默认关闭），开启后相机新拍的照片会自动落到手机
+- 🎛️ **遥控快门**：轻触连接页圆环进入遥控页，显示挡位 / 光圈 / ISO / 快门，按一下拍到相机存储卡；实时取景画面尚未实现
 
 ## 功能一览
 
 | | |
 |---|---|
-| 连接 | 两种模式：**AP** 一键加入相机热点（`WifiNetworkSpecifier`）+ 自动探测 `192.168.1.1:15740`；**STA** 扫描当前局域网（或手动 IP）直连相机 |
+| 连接 | 两种模式：**AP** 用 `WifiNetworkSpecifier` 加入相机热点（SSID / 密码可在弹窗里填），默认探测 `192.168.1.1:15740`；**STA** 扫描当前局域网（或手动 IP）直连相机 |
 | 稳定 | 心跳可调（10/15/30/60 s）、掉线指数退避重连（1→30 s）、前台服务保活，锁屏不中断 |
 | 教程 | 内置分步连接教程（Z50II / 其它 Z / D 系列菜单路径），连不上时的排查清单 |
 | 浏览 | 按 handle 倒序分页读取存储卡，JPEG 缩略图懒加载 + 内存 LRU 缓存，按全部 / 照片 / 视频 / RAW 筛选 |
@@ -46,7 +47,7 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 | 诊断 | 一键复制相机型号 / 固件 / 连接地址 / 最近 150 条协议日志，方便反馈问题 |
 | 应用内更新 | 「设置 → 关于」自动比对 GitHub Releases，有新版本时显示徽标；弹窗查看更新内容，App 内下载 APK 并拉起系统安装器（非静默，需允许安装未知应用） |
 | 配对相机 | 「设置 → 连接 → 配对相机」按 SnapBridge 的同一套 PTP/IP 配对流程注册本机（进入配对模式 → 取配对码 → 完成配对）；配对后相机记住本机、保存网络，不必每次重走连接向导 |
-| 遥控拍摄 | 连接后轻触连接页的大圆环进入遥控页，按一下就触发相机快门（尼康 `0x9207`）；配合「拍摄后自动拉取」拍完自动回到手机 |
+| 遥控拍摄 | 连接后轻触连接页的圆环（整圈可点）进入遥控页：顶部显示挡位 / 光圈 / ISO / 快门，按快门拍到相机存储卡（尼康 `0x9207`），可选中自动换成大图预览；实时取景尚未实现 |
 
 ## 下载与安装
 
@@ -56,7 +57,7 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 
 > 装好之后不必再回网页：**设置 → 关于** 会在有新版本时提示，可直接在 App 内下载并安装。
 
-要求：**Android 10 (API 29) 及以上，arm64-v8a**。APK 约 2 MB，不含任何广告或统计 SDK。
+要求：**Android 10 (API 29) 及以上，arm64-v8a**。APK 约 2.3 MB，不含任何广告或统计 SDK。
 
 ## 连接步骤
 
@@ -75,10 +76,6 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 2. 给配置起名 → 选择家里的路由器 SSID → 输入 Wi-Fi 密码 → IP 选「自动获取」
 3. **手机**：连同一个路由器 Wi-Fi（不用连相机热点，手机仍可上网）
 4. **App**：模式切到「同一 Wi-Fi」→ 点「扫描并连接」；找不到就用「手动 IP」填相机在局域网里的地址
-
-<p align="center">
-  <img src="docs/screenshot-sta.png" width="240" alt="STA 模式">
-</p>
 
 > 同一时间只能有一个客户端连相机：请先完全退出 SnapBridge。
 
@@ -109,17 +106,19 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 
 **手机里删了照片，App 还显示「已下载」** — 「已下载」是 App 自己的记录（按相机文件名与大小），不会跟着相册删除而变化。想重新取回时，直接在浏览页选中该文件再下载一次即可；也可以在「设置 → 存储 → 清除下载记录」后刷新列表。
 
+**遥控页按了快门相机没反应** — 先确认相机在 **M / A / P / S** 挡（AUTO 或其它场景模式下部分机型拒绝远程释放）。长曝光时相机会先做降噪、期间不响应指令，App 会等待并提示「已触发拍摄，长曝光/降噪可能要等几秒」。
+
 **连不上、想反馈** — 设置页 →「复制诊断信息」，把复制到的内容贴到 [Issues](https://github.com/AchooLuv/NikonLink/issues)，里面已包含相机型号、固件与最近的协议日志。
 
 ## 技术实现
 
 - **PTP/IP（ISO 15740 over TCP，端口 15740）**：双 TCP 连接（命令/数据 + 事件），`Init_Command_Request/Ack`、`Init_Event_Request/Ack` 握手，`OpenSession` 后执行 PTP 事务
-- 用到的操作：`GetDeviceInfo`、`GetStorageIDs`、`GetObjectHandles`、`GetObjectInfo`、`GetThumb`、`GetPartialObject`，以及尼康厂商操作 `0x90C4`（大缩略图）、`0x9407/0x9408`（「发送到智能设备」队列）
+- 用到的操作：`GetDeviceInfo`、`GetStorageIDs`、`GetObjectHandles`、`GetObjectInfo`、`GetThumb`、`GetPartialObject`，以及尼康厂商操作（配对、快门、事件队列、大缩略图，详见下表）
 - **流式传输**：按 PTP 包长度从 socket 直接读入 256 KiB 缓冲并写入 `RandomAccessFile`，单文件内存占用与文件大小无关
 - **STA 发现**：枚举手机自己的 IPv4 网段，48 路并发探测 `15740` 端口，失败可手动指定 IP；AP 模式则用 `WifiNetworkSpecifier` 加入相机热点
 - **断点续传**：`.part` 文件 + `GetPartialObject(handle, offset, 4 MiB)`，恢复时按 `.part` 长度定位
 - **稳定性**：`TCP_NODELAY`、4 MiB 接收缓冲、15 s 心跳、事件线程监测断链、指数退避重连、前台服务保活
-- **UI**：Jetpack Compose + Material 3，尼康黄（`#FFCD00`）单一强调色，深色底；R8 收缩后整包约 2 MB
+- **UI**：Jetpack Compose + Material 3，尼康黄（`#FFCD00`）单一强调色，深色底；R8 收缩后整包约 2.3 MB
 
 ### 已验证的尼康厂商指令（Z50II，固件 C 1.11）
 
@@ -160,7 +159,7 @@ SnapBridge 传图慢、后台易断、RAW 体验差，第三方方案大多要�
 ```bash
 # JDK 17 + Android SDK 35
 ./gradlew :app:assembleRelease      # 产物：app/build/outputs/apk/release/app-release.apk
-./gradlew :app:testDebugUnitTest    # 36 项测试，含进程内假相机的 PTP/IP 回环测试
+./gradlew :app:testDebugUnitTest    # 51 项测试，含进程内假相机的 PTP/IP 回环测试
 ```
 
 `keystore/nikonlink-release.jks` 为发布签名（口令写在 `app/build.gradle.kts`），用于让后续版本可以覆盖安装。
