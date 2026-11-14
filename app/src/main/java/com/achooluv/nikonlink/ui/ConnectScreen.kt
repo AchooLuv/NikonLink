@@ -1,5 +1,7 @@
 package com.achooluv.nikonlink.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -404,6 +406,19 @@ private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
     val busy = state is ConnState.Connecting || state is ConnState.Reconnecting
     val failed = state is ConnState.Error
 
+    // While connected, keep a slow inward ripple running. It only exists in this
+    // branch, so an idle/disconnected screen paints nothing and costs nothing.
+    var flow = 1f
+    if (connected) {
+        val ripple = rememberInfiniteTransition(label = "ripple")
+        flow = ripple.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(2200, easing = LinearEasing), RepeatMode.Restart),
+            label = "focus",
+        ).value
+    }
+
     // Only animate while a connection is actually in flight: an infinite
     // transition would keep invalidating this subtree (and redrawing the ring)
     // every frame even on the idle screen.
@@ -442,12 +457,35 @@ private fun StatusEmblem(state: ConnState, onRemote: (() -> Unit)?) {
             if (connected || busy) {
                 drawCircle(
                     brush = Brush.radialGradient(
-                        colors = listOf(ringColor.copy(alpha = if (busy) pulse else 0.18f), Color.Transparent),
+                        colors = listOf(
+                            ringColor.copy(
+                                alpha = if (busy) pulse else 0.18f + 0.10f * (1f - flow),
+                            ),
+                            Color.Transparent,
+                        ),
                         center = center,
                         radius = size.minDimension / 2f,
                     ),
                     radius = size.minDimension / 2f,
                 )
+            }
+
+            // Looping convergence waves: three staggered rings shrink onto the
+            // emblem and fade out, then the cycle restarts invisibly.
+            if (connected) {
+                val outer = size.minDimension / 2f * 1.45f
+                val inner = size.minDimension / 2f
+                for (i in 0..2) {
+                    val p = ((flow - i * 0.16f) / 0.68f).let { if (it < 0f) it + 1f else it }
+                        .coerceIn(0f, 1f)
+                    if (p <= 0f || p >= 1f) continue
+                    val radius = outer + (inner - outer) * p
+                    drawCircle(
+                        color = NikonYellow.copy(alpha = 0.14f * (1f - p)),
+                        radius = radius,
+                        style = Stroke(2.dp.toPx()),
+                    )
+                }
             }
 
             drawArc(
