@@ -453,6 +453,40 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         runCatching { transaction(Ptp.OP_NIKON_DELETE_SDRAM_IMAGE, intArrayOf(0)) }
     }
 
+    /** Z bodies' frame getter (0x9428); payload is display-info header + JPEG. */
+    fun liveViewImageEx(): ByteArray = collect(Ptp.OP_NIKON_GET_LIVE_VIEW_IMAGE_EX, IntArray(0))
+
+    /** Legacy frame getter (0x9203), used when 0x9428 is unsupported. */
+    fun liveViewImage(): ByteArray = collect(Ptp.OP_NIKON_GET_LIVE_VIEW_IMAGE, IntArray(0))
+
+    /** Switch the body's application mode (0x9435); 1 = wireless/USB host control. */
+    fun changeApplicationMode(mode: Int) {
+        transaction(Ptp.OP_NIKON_CHANGE_APPLICATION_MODE, intArrayOf(mode))
+    }
+
+    /** Drop stale events queued before this session (0x9461). */
+    fun clearEvents() {
+        runCatching { transaction(Ptp.OP_NIKON_CLEAR_EVENT, IntArray(0)) }
+    }
+
+    /** One GetEventEx batch (0x941C); raw payload. */
+    fun getEventExRaw(): ByteArray = collect(Ptp.OP_NIKON_GET_EVENT_EX, IntArray(0))
+
+    /**
+     * Sends an operation and returns its PTP response code instead of throwing on
+     * non-OK answers. Used for busy probes such as DeviceReady (0x90C8).
+     */
+    fun responseCode(operation: Int, params: IntArray = IntArray(0)): Int {
+        return try {
+            transaction(operation, params)
+            Ptp.RESP_OK
+        } catch (e: PtpException) {
+            e.code
+        }
+    }
+
+    /** True when the body reports it finished the current operation (0x90C8 == 0x2001). */
+    fun deviceReadyNow(): Boolean = responseCode(Ptp.OP_NIKON_DEVICE_READY_CAPTURE) == Ptp.RESP_OK
     /** 0x90C0(0xFFFFFFFF): capture straight to SDRAM without autofocus. */
     fun captureSdram() {
         transaction(Ptp.OP_NIKON_CAPTURE_TO_SDRAM, intArrayOf(-1))

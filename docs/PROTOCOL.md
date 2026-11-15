@@ -23,7 +23,13 @@
 | `0x9201` | 无 | StartLiveView | ✅ 返回 OK |
 | `0x90C2` | 1=交给主机 / 0=交还机身 | ChangeCameraMode | ✅ |
 | `0x9202` | 无 | EndLiveView（**不是** DeviceReady） | ✅ |
-| `0x9203` | 无 | GetLiveViewImage | ❌ 返回 `0xA00B`（`NotLiveView`） |
+| `0x9203` | 无 | GetLiveViewImage（老机型取帧） | 兜底（Z50II 回 `0xA00B`） |
+| `0x9428` | 无 | GetLiveViewImageEx（Z 系取帧） | ✅ 实测 33 KB/帧 |
+| `0x9435` | 1=主机控制 / 0=退出 | ChangeApplicationMode | ✅ 遥控写入门 |
+| `0x941C` | 无 | GetEventEx（Z 系多参数事件） | ✅ |
+| `0x9461` | 无 | ClearEvent | ✅ |
+| `0xD1AC` / `0xD1BC` | u8 | 取景尺寸 / 压缩档 | ✅ |
+| `0xD1B8` / `0xD1BB` | u8 | CameraLiveViewStatus / LiveViewImageStatus | ✅ |
 | `0x90C7` | 无 | GetEvent：相机事件队列 | ✅ 见下方事件格式 |
 | 事件 `0xC101` | param1=句柄 | ObjectAddedInSDRAM | ✅ 遥控照片句柄来源 |
 | 事件 `0x4002` | param1=句柄 | ObjectAdded（卡） | ✅ 存卡照片句柄来源 |
@@ -39,8 +45,13 @@
 **事件格式**：`0x90C7` 返回 `u16 事件数` + 每条 6 字节（`u16 code` + `u32 param1`）；
 `0xC101`/`0x4002` 的 param1 就是新照片的对象句柄，**不会**出现在 `GetObjectHandles` 里。
 
-**取景现状**：`0x90C2(1)` + `0x9201` 后 `LiveViewStatus(0xD1A2)=1`、`LiveViewProhibitCondition(0xD1A4)=0`，
-但 `0x9203` 始终不返回帧（`NotLiveView`）；短超时会读乱 PTP 流，因此当前版本不做取景。
+**取景（Z50II 固件 C 1.11 已打通）**：`0x9435(1)` → `0x90C2(1)` → `0xD1A6=0` →
+`0x9201` → 轮询 `0x90C8` 至就绪（上限 2 s）→ 循环 `0x9428` 取帧（XGA + Basic，实测 10–13 fps，单帧约 33 KB）；
+`0x9428` 被拒时回落 `0x9203`。退出时 `0x9202` + `0x90C2(0)` 还机身自由。
+单帧载荷可能是「display-info 头 + JPEG」，客户端从 `FF D8 FF` 起截取。
+
+官方取景支持列表（NX Tether）：Z9 / Z8 / Z7II / Z7 / Z6III / Z6II / Z6 / Z5II / Z5IIC / Z50II / Z30 / Zf / ZR / D6 / D780；
+不支持：Z5 / Z50 / Zfc。
 
 配对后相机改由本机身份（`NikonLink (Android)`）识别，无需每次重走连接向导。
 

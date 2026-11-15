@@ -205,6 +205,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
             _captureNote.value = "正在拍摄…"
             try {
                 captureInFlight = true
+                liveViewPaused = true
                 var fresh: Int? = null
                 var triggered = false
                 val attempts = listOf<Pair<String, () -> Unit>>(
@@ -256,6 +257,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 Diagnostics.log("遥控拍摄失败：${humanError(e)}")
             } finally {
                 captureInFlight = false
+                liveViewPaused = false
                 // Never leave the button stuck on "拍摄中" if something cancelled us.
                 if (_captureState.value == CaptureState.Busy) {
                     _captureState.value = CaptureState.Failed
@@ -279,6 +281,21 @@ class NikonLinkRepository private constructor(private val app: Application) {
     /** Thumbnail of the last frame this app shot, shown as a capture preview. */
     private val _lastShot = MutableStateFlow<ByteArray?>(null)
     val lastShot: StateFlow<ByteArray?> = _lastShot
+
+    /** Latest live-view JPEG while the remote page is open. */
+    private val _preview = MutableStateFlow<ByteArray?>(null)
+    val preview: StateFlow<ByteArray?> = _preview
+
+    /** Live-view pipeline state, for the page's status line. */
+    enum class LiveViewState { Idle, Starting, Running, Failed }
+    private val _liveView = MutableStateFlow(LiveViewState.Idle)
+    val liveView: StateFlow<LiveViewState> = _liveView
+
+    private var liveViewJob: Job? = null
+
+    /** A release holds the command channel; frames resume right after it. */
+    @Volatile
+    private var liveViewPaused = false
 
     /** Shooting parameters shown above the remote viewfinder. */
     data class RemoteInfo(
@@ -328,27 +345,46 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
         scope.launch {
             _remote.value = RemoteState.Starting
+            _liveView.value = LiveViewState.Starting
             try {
+                runCatching { client.clearEvents() }
                 runCatching { client.deleteAllSdram() }
                 val prohibit = runCatching { client.liveViewProhibit() }.getOrNull()
                 Diagnostics.log("LiveViewProhibit=0x${prohibit?.toString(16) ?: "?"}")
+
+                // Z bodies only accept remote writes once application mode is on;
+                // 0x9435 is the documented switch (mode 1 = host control).
+                val appMode = runCatching { client.changeApplicationMode(1) }
+                Diagnostics.log("0x9435(1) ApplicationMode -> ${appMode.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
                 val mode = runCatching { client.changeCameraMode(1) }
                 Diagnostics.log("0x90C2(1) ChangeCameraMode -> ${mode.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
-                // SnapBridge sets LiveViewSelector to STILL_IMAGE before starting LV.
-                val selector = runCatching { client.writeProp(0xD1A6, byteArrayOf(0)) }
+                val selector = runCatching { client.writeProp(Ptp.PROP_LIVE_VIEW_SELECTOR, byteArrayOf(0)) }
                 Diagnostics.log("0xD1A6=0 LiveViewSelector -> ${selector.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
+                runCatching { client.writeProp(Ptp.PROP_LIVE_VIEW_IMAGE_SIZE, byteArrayOf(3)) }
+                runCatching { client.writeProp(Ptp.PROP_LIVE_VIEW_IMAGE_COMPRESSION, byteArrayOf(0)) }
+
                 val lv = runCatching { client.startLiveViewOnly() }
                 Diagnostics.log("0x9201 StartLiveView -> ${lv.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
-                delay(500)
+
+                // DeviceReady polling: the body answers DeviceBusy while the live
+                // view pipeline spins up (gphoto calls this nikon_wait_busy).
+                var ready = false
+                repeat(20) {
+                    if (client.deviceReadyNow()) { ready = true; return@repeat }
+                    delay(100)
+                }
+                Diagnostics.log("0x90C8 ready=$ready")
+                delay(300)
                 val status = runCatching { client.readPropByte(0xD1A2) }.getOrDefault(-1)
-                Diagnostics.log("LiveViewStatus 0xD1A2=$status")
+                val cameraStatus = runCatching { client.readPropByte(Ptp.PROP_CAMERA_LIVE_VIEW_STATUS) }.getOrDefault(-1)
+                val imageStatus = runCatching { client.readPropByte(Ptp.PROP_LIVE_VIEW_IMAGE_STATUS) }.getOrDefault(-1)
+                Diagnostics.log("LiveViewStatus 0xD1A2=$status / 0xD1B8=$cameraStatus / 0xD1BB=$imageStatus")
                 refreshRemoteInfo()
                 _remote.value = RemoteState.Ready
-                // Live-view frame polling is disabled for now: 0x9203 can stay
-                // unanswered and a short socket timeout desyncs the PTP stream,
-                // which then kills the whole session.
+                startLiveViewPolling()
             } catch (e: Exception) {
                 _remote.value = RemoteState.Failed
+                _liveView.value = LiveViewState.Failed
                 Diagnostics.log("遥控模式开启失败：${humanError(e)}")
             }
         }
@@ -358,12 +394,88 @@ class NikonLinkRepository private constructor(private val app: Application) {
         // Only undo what beginRemote actually started; on a plain capture page the
         // camera was never taken over, so touching live view here would disturb it.
         if (_remote.value == RemoteState.Idle) return
+        liveViewJob?.cancel()
+        liveViewJob = null
+        _preview.value = null
+        _liveView.value = LiveViewState.Idle
         _remoteInfo.value = null
         scope.launch {
             runCatching { client.stopLiveView() }
+            runCatching { client.changeApplicationMode(0) }
             runCatching { client.returnToCamera() }
             _remote.value = RemoteState.Idle
         }
+    }
+
+    /** Polls 0x9428 (fallback 0x9203) while the remote page is open. */
+    private fun startLiveViewPolling() {
+        liveViewJob?.cancel()
+        _liveView.value = LiveViewState.Starting
+        liveViewJob = scope.launch {
+            var legacy = false
+            var frames = 0
+            var failures = 0
+            var lastError: String? = null
+            var windowStart = System.currentTimeMillis()
+            var windowFrames = 0
+            while (true) {
+                if (liveViewPaused) {
+                    delay(60)
+                    continue
+                }
+                val attempt = runCatching {
+                    if (legacy) client.liveViewImage() else client.liveViewImageEx()
+                }
+                if (!legacy && attempt.isFailure) {
+                    val msg = attempt.exceptionOrNull()?.let { humanError(it) } ?: "?"
+                    if (msg.contains("0x2005") || msg.contains("不支持")) {
+                        legacy = true
+                        Diagnostics.log("0x9428 不可用，改用 0x9203: $msg")
+                    }
+                }
+                val jpeg = attempt.getOrNull()?.let { extractLiveViewJpeg(it) }
+                if (jpeg != null) {
+                    frames++
+                    failures = 0
+                    _preview.value = jpeg
+                    if (frames == 1) {
+                        _liveView.value = LiveViewState.Running
+                        Diagnostics.log("取景首帧 ${jpeg.size} 字节")
+                    }
+                    windowFrames++
+                    val now = System.currentTimeMillis()
+                    if (now - windowStart >= 5000) {
+                        val fps = windowFrames * 1000.0 / (now - windowStart)
+                        Diagnostics.log("取景帧率 %.1f fps（%d 帧 / %d ms）".format(fps, windowFrames, now - windowStart))
+                        windowStart = now
+                        windowFrames = 0
+                    }
+                } else {
+                    failures++
+                    lastError = attempt.exceptionOrNull()?.let { humanError(it) }
+                    if (failures == 1) Diagnostics.log("取景失败 #1: $lastError")
+                    if (failures >= 20) {
+                        _liveView.value = LiveViewState.Failed
+                        Diagnostics.log("取景停止：连续 $failures 次无帧（$lastError）")
+                        return@launch
+                    }
+                    delay(150)
+                    continue
+                }
+                delay(40)
+            }
+        }
+    }
+
+    /** Nikon LV payloads may prepend a display-info header; keep everything from SOI on. */
+    private fun extractLiveViewJpeg(bytes: ByteArray): ByteArray? {
+        if (bytes.size < 4) return null
+        for (i in 0 until bytes.size - 3) {
+            if (bytes[i] == 0xFF.toByte() && bytes[i + 1] == 0xD8.toByte() && bytes[i + 2] == 0xFF.toByte()) {
+                return bytes.copyOfRange(i, bytes.size)
+            }
+        }
+        return null
     }
 
     /** All object handles on every storage (card and SDRAM); empty when the body refuses. */

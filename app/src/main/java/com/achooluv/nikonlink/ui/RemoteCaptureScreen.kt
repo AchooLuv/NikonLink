@@ -23,13 +23,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,7 +65,10 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     val note by repo.captureNote.collectAsStateWithLifecycle()
     val shot by repo.lastShot.collectAsStateWithLifecycle()
     val info by repo.remoteInfo.collectAsStateWithLifecycle()
+    val previewBytes by repo.preview.collectAsStateWithLifecycle()
+    val liveState by repo.liveView.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
+    var showModels by remember { mutableStateOf(false) }
 
     BackHandler { onClose() }
     // Remote capture on Nikon bodies lives inside the live-view session: arm it on
@@ -79,6 +86,14 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     // the bytes actually change (not on every recomposition).
     val frame by produceState<ImageBitmap?>(initialValue = null, shot) {
         value = shot?.let { bytes ->
+            withContext(Dispatchers.Default) {
+                runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
+                    .getOrNull()
+            }
+        }
+    }
+    val liveFrame by produceState<ImageBitmap?>(initialValue = null, previewBytes) {
+        value = previewBytes?.let { bytes ->
             withContext(Dispatchers.Default) {
                 runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
                     .getOrNull()
@@ -114,6 +129,9 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                     fontSize = 12.sp,
                 )
             }
+            TextButton(onClick = { showModels = true }) {
+                Text("机型支持", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
+            }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -136,16 +154,22 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                 .background(InkRaised),
             contentAlignment = Alignment.Center,
         ) {
-            val bitmap = frame
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap,
+            val live = liveFrame
+            val still = frame
+            when {
+                live != null -> Image(
+                    bitmap = live,
+                    contentDescription = "实时取景",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                still != null -> Image(
+                    bitmap = still,
                     contentDescription = "刚拍摄的照片",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-            } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                else -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
                         Icons.Rounded.PhotoCamera,
                         contentDescription = null,
@@ -153,10 +177,23 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                         modifier = Modifier.size(44.dp),
                     )
                     Spacer(Modifier.height(10.dp))
-                    Text("等待拍摄", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        when (liveState) {
+                            NikonLinkRepository.LiveViewState.Starting -> "正在启动取景…"
+                            NikonLinkRepository.LiveViewState.Failed -> "未收到取景画面"
+                            else -> "等待取景"
+                        },
+                        color = Paper,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "取景画面仍在开发中，拍完会显示刚拍的照片。",
+                        when (liveState) {
+                            NikonLinkRepository.LiveViewState.Failed ->
+                                "这台机型可能不在取景支持列表内，点右上角「机型支持」查看。"
+                            else -> "取景画面会在相机就绪后自动出现。"
+                        },
                         color = NikonLinkTheme.colors.dim,
                         fontSize = 11.sp,
                         textAlign = TextAlign.Center,
@@ -212,6 +249,47 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
             }
         }
     }
+
+    if (showModels) LiveViewModelsDialog(onDismiss = { showModels = false })
+}
+
+private val LIVE_VIEW_SUPPORTED = listOf(
+    "Z9", "Z8", "Z7II", "Z7", "Z6III", "Z6II", "Z6",
+    "Z5II", "Z5IIC", "Z50II", "Z30", "Zf", "ZR", "D6", "D780",
+)
+
+private val LIVE_VIEW_UNSUPPORTED = listOf("Z5", "Z50", "Zfc")
+
+@Composable
+private fun LiveViewModelsDialog(onDismiss: () -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = InkRaised,
+        titleContentColor = Paper,
+        textContentColor = PaperDim,
+        title = { Text("实时取景支持机型", fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                Text("支持（尼康 NX Tether 官方列表）", color = Mint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                Text(LIVE_VIEW_SUPPORTED.joinToString(" · "), color = PaperDim, fontSize = 12.sp, lineHeight = 18.sp)
+                Spacer(Modifier.height(12.dp))
+                Text("不支持", color = Ember, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                Text(LIVE_VIEW_UNSUPPORTED.joinToString(" · "), color = PaperDim, fontSize = 12.sp)
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "未列出的机型多半可以连接与拍摄，但取景画面可能无法获取。",
+                    color = NikonLinkTheme.colors.dim,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("知道了", color = NikonYellow) }
+        },
+    )
 }
 
 @Composable

@@ -90,6 +90,35 @@ object Ptp {
     /** Nikon vendor op: storage IDs including the SDRAM slot that holds remote shots. */
     const val OP_NIKON_GET_VENDOR_STORAGE_IDS = 0x9209
 
+    /** Nikon vendor op: GetLiveViewImage (0x9203) — legacy frame getter. */
+    const val OP_NIKON_GET_LIVE_VIEW_IMAGE = 0x9203
+
+    /** Nikon vendor op: GetLiveViewImageEx (0x9428) — Z bodies' frame getter. */
+    const val OP_NIKON_GET_LIVE_VIEW_IMAGE_EX = 0x9428
+
+    /** Nikon vendor op: ChangeApplicationMode (0x9435); Z bodies need mode 1 for remote writes. */
+    const val OP_NIKON_CHANGE_APPLICATION_MODE = 0x9435
+
+    /** Nikon vendor op: GetEventEx (0x941C) — multi-parameter events on Z bodies. */
+    const val OP_NIKON_GET_EVENT_EX = 0x941C
+
+    /** Nikon vendor op: ClearEvent (0x9461) — drop stale events after a reconnect. */
+    const val OP_NIKON_CLEAR_EVENT = 0x9461
+
+    /** LiveViewImageSize (0xD1AC): 1=QVGA, 2=VGA, 3=XGA. */
+    const val PROP_LIVE_VIEW_IMAGE_SIZE = 0xD1AC
+
+    /** LiveViewImageCompression (0xD1BC): 0=Basic…5=Fine quality priority. */
+    const val PROP_LIVE_VIEW_IMAGE_COMPRESSION = 0xD1BC
+
+    /** CameraLiveViewStatus (0xD1B8). */
+    const val PROP_CAMERA_LIVE_VIEW_STATUS = 0xD1B8
+
+    /** LiveViewImageStatus (0xD1BB). */
+    const val PROP_LIVE_VIEW_IMAGE_STATUS = 0xD1BB
+
+    /** LiveViewSelector (0xD1A6): 0=still image, 1=video. */
+    const val PROP_LIVE_VIEW_SELECTOR = 0xD1A6
     /** Nikon vendor op: pull one queued event (0x90C7). Modern bodies use this. */
     const val OP_NIKON_GET_EVENT = 0x90C7
     /** Nikon vendor op: delete an SDRAM image (0x0 clears all) to free the buffer. */
