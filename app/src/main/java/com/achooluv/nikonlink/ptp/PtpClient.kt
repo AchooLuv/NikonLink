@@ -433,6 +433,13 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
             ((data[2].toInt() and 0xFF) shl 16) or ((data[3].toInt() and 0xFF) shl 24)
     }
 
+    /** AF-ON: asks the body to run autofocus (0x90C1, no params). */
+    fun afDrive(): ByteArray = collect(Ptp.OP_NIKON_AF_DRIVE, intArrayOf())
+
+    /** Moves the live-view AF point (0x9205) before driving focus. */
+    fun changeAfArea(x: Int, y: Int): ByteArray =
+        collect(Ptp.OP_NIKON_CHANGE_AF_AREA, intArrayOf(x, y))
+
     /** DevicePropDesc (0x1014): code, type, GetSet flag, then value/default/form. */
     fun propDescriptor(code: Int): ByteArray = collect(Ptp.OP_GET_DEVICE_PROP_DESC, intArrayOf(code))
 

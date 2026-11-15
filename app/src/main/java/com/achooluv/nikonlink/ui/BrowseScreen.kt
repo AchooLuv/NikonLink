@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Refresh
@@ -129,6 +130,8 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val queue by repo.transferQueue.collectAsStateWithLifecycle()
     val queueBusy by repo.queueBusy.collectAsStateWithLifecycle()
     val queueSupported by repo.queueSupported.collectAsStateWithLifecycle()
+    val queued by repo.queueCount.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     var filter by remember { mutableStateOf(LibraryFilter.ALL) }
     var selection by remember { mutableStateOf(setOf<Int>()) }
@@ -170,7 +173,10 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                         filter == LibraryFilter.MARKED ->
                             if (queueSupported) "相机上标记了 ${queue.size} 个 · 按相机 i 键可标记" else "这台相机不支持标记队列"
                         filter == LibraryFilter.NEW -> "${visible.size} 个未下载 · 可全选后一键下载"
-                        else -> "${files.size} 个文件 · 预览使用相机 JPEG 缩略图"
+                        else -> buildString {
+                            append("${files.size} 个文件 · 预览使用相机 JPEG 缩略图")
+                            if (queued > 0) append(" · 待传输 $queued")
+                        }
                     },
                     color = NikonLinkTheme.colors.dim,
                     fontSize = 12.sp,
@@ -259,7 +265,12 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                             store = thumbs,
                             selected = file.handle in selection,
                             imported = file.handle in imported,
-                            load = { repo.thumbnail(file.handle) },
+                            load = {
+                                repo.thumbnail(file.handle)
+                                    ?: if (file.kind == FileKind.MOVIE && repo.isImported(file)) {
+                                        repo.videoPoster(file.name)
+                                    } else null
+                            },
                             onClick = {
                                 selection = if (file.handle in selection) {
                                     selection - file.handle
@@ -267,6 +278,24 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                                     selection + file.handle
                                 }
                             },
+                            onPlay = if (file.kind == FileKind.MOVIE) {
+                                {
+                                    if (!repo.isImported(file)) {
+                                        repo.download(listOf(file))
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "已加入下载队列，完成后可播放",
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                    } else if (!repo.openVideo(file)) {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "本机找不到这个视频，请重新下载",
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                }
+                            } else null,
                         )
                     }
 
@@ -312,6 +341,7 @@ private fun ThumbCell(
     imported: Boolean,
     load: suspend () -> ByteArray?,
     onClick: () -> Unit,
+    onPlay: (() -> Unit)? = null,
 ) {
     val bitmap = store.state(file.handle).value
 
@@ -381,6 +411,25 @@ private fun ThumbCell(
                         modifier = Modifier.size(11.dp),
                     )
                 }
+            }
+        }
+
+        if (onPlay != null) {
+            Box(
+                Modifier
+                    .align(Alignment.Center)
+                    .size(40.dp)
+                    .background(Color(0xB3000000), CircleShape)
+                    .border(1.dp, Color(0x66FFFFFF), CircleShape)
+                    .clickable { onPlay() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.PlayArrow,
+                    contentDescription = if (imported) "播放视频" else "下载后播放",
+                    tint = if (imported) NikonYellow else Color(0x99FFFFFF),
+                    modifier = Modifier.size(24.dp),
+                )
             }
         }
 

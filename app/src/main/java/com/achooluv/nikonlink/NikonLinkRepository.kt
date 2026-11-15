@@ -200,9 +200,13 @@ class NikonLinkRepository private constructor(private val app: Application) {
             return
         }
         if (_captureState.value == CaptureState.Busy) return
-        scope.launch {
+        scope.launch { captureOnce() }
+    }
+
+    /** One release, awaited. Shared by the shutter button and interval shooting. */
+    private suspend fun captureOnce(useSelfTimer: Boolean = true) {
             _captureState.value = CaptureState.Busy
-            val waitSeconds = settings.selfTimerSeconds.value
+            val waitSeconds = if (useSelfTimer) settings.selfTimerSeconds.value else 0
             if (waitSeconds > 0) {
                 for (left in waitSeconds downTo 1) {
                     _captureNote.value = "${left} 秒后拍摄…"
@@ -271,7 +275,46 @@ class NikonLinkRepository private constructor(private val app: Application) {
                     _captureNote.value = "拍摄超时，请重试"
                 }
             }
+    }
+
+    // ------------------------------------------------------- interval shooting
+
+    data class IntervalState(val running: Boolean = false, val shot: Int = 0, val total: Int = 0)
+
+    private val _interval = MutableStateFlow(IntervalState())
+    val interval: StateFlow<IntervalState> = _interval
+    private var intervalJob: Job? = null
+
+    /** Fires [count] shots every [seconds] seconds; count <= 0 means until stopped. */
+    fun startInterval(seconds: Int, count: Int) {
+        if (intervalJob?.isActive == true) return
+        intervalJob = scope.launch {
+            val unlimited = count <= 0
+            val limit = if (unlimited) Int.MAX_VALUE else count
+            var shot = 0
+            try {
+                while (shot < limit) {
+                    // Never overlap a manual release or keep firing after a drop.
+                    while (_captureState.value == CaptureState.Busy) delay(200)
+                    if (_state.value !is ConnState.Connected) break
+                    shot++
+                    _interval.value = IntervalState(true, shot, if (unlimited) 0 else limit)
+                    captureOnce(useSelfTimer = false)
+                    if (shot >= limit) break
+                    delay(seconds.coerceAtLeast(1) * 1000L)
+                }
+            } finally {
+                _interval.value = IntervalState(false, shot, if (unlimited) 0 else limit)
+                if (shot >= limit) _captureNote.value = "间隔拍摄完成（$shot 张）"
+                else _captureNote.value = "间隔拍摄已停止（$shot 张）"
+                Diagnostics.log("间隔拍摄结束 shot=$shot limit=$limit")
+            }
         }
+    }
+
+    fun stopInterval() {
+        intervalJob?.cancel()
+        intervalJob = null
     }
 
     fun resetCaptureState() {
@@ -372,14 +415,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 "mode" -> modeRaw?.let { control.copy(current = it) } ?: control
                 "aperture" -> apertureRaw?.let { control.copy(current = it) } ?: control
                 "iso" -> isoRaw?.let { control.copy(current = it) } ?: control
-                "shutter" -> shutterUs?.let {
-                    val packed = if (it >= 1_000_000) {
-                        ((it / 1_000_000) shl 16).toInt() or 1
-                    } else {
-                        (1 shl 16) or Math.round(1_000_000.0 / it).toInt()
-                    }
-                    control.copy(current = packed)
-                } ?: control
+                "shutter" -> shutterRaw?.let { control.copy(current = it) } ?: control
                 else -> control
             }
         }
@@ -410,8 +446,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 Diagnostics.log("0x90C2(1) ChangeCameraMode -> ${mode.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
                 val selector = runCatching { client.writeProp(Ptp.PROP_LIVE_VIEW_SELECTOR, byteArrayOf(0)) }
                 Diagnostics.log("0xD1A6=0 LiveViewSelector -> ${selector.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
-                runCatching { client.writeProp(Ptp.PROP_LIVE_VIEW_IMAGE_SIZE, byteArrayOf(3)) }
-                runCatching { client.writeProp(Ptp.PROP_LIVE_VIEW_IMAGE_COMPRESSION, byteArrayOf(0)) }
+                applyLiveViewQualityBlocking()
 
                 val lv = runCatching { client.startLiveViewOnly() }
                 Diagnostics.log("0x9201 StartLiveView -> ${lv.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
@@ -443,6 +478,8 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     fun endRemote() {
+        // Leaving the page must not keep firing an interval sequence.
+        stopInterval()
         // Only undo what beginRemote actually started; on a plain capture page the
         // camera was never taken over, so touching live view here would disturb it.
         if (_remote.value == RemoteState.Idle) return
@@ -488,16 +525,17 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     private fun typeSize(type: Int): Int = when (type) {
-        0x0002, 0x0003 -> 1
-        0x0004, 0x0005 -> 2
-        0x0006, 0x0007 -> 4
+        0x0001, 0x0002 -> 1   // INT8 / UINT8
+        0x0003, 0x0004 -> 2   // INT16 / UINT16
+        0x0005, 0x0006 -> 4   // INT32 / UINT32
+        0x0007, 0x0008 -> 8   // INT64 / UINT64
         else -> -1
     }
 
     private fun readTyped(b: ByteArray, o: Int, type: Int): Int = when (typeSize(type)) {
-        1 -> b[o].toInt() and 0xFF
-        2 -> u16(b, o)
-        4 -> u32v(b, o).toInt()
+        1 -> if (type == 0x0001) b[o].toInt() else b[o].toInt() and 0xFF
+        2 -> if (type == 0x0003) u16(b, o).toShort().toInt() else u16(b, o)
+        4 -> if (type == 0x0005) u32v(b, o).toInt() else u32v(b, o).toInt()
         else -> -1
     }
 
@@ -513,20 +551,21 @@ class NikonLinkRepository private constructor(private val app: Application) {
 
     private fun formatAperture(raw: Int): String = "f/%.1f".format(raw / 100.0)
 
+    /** Shutter speed from 0.1 ms units (80 -> 8 ms -> 1/125). */
     private fun formatShutter(raw: Int): String {
-        val num = (raw ushr 16) and 0xFFFF
-        val den = raw and 0xFFFF
-        if (num == 0 || den == 0) return "—"
-        return if (den == 1) "${num}s" else "$num/$den"
+        if (raw <= 0) return "—"
+        return if (raw >= 10_000) "%.1fs".format(raw / 10_000.0)
+        else "1/${(10_000.0 / raw).toInt()}"
     }
 
     private fun shutterOptions(): List<ParamOption> {
         val out = ArrayList<ParamOption>()
         for (den in intArrayOf(32000, 25000, 20000, 16000, 12500, 10000, 8000, 6400, 5000, 4000, 3200, 2500, 2000, 1600, 1250, 1000, 800, 640, 500, 400, 320, 250, 200, 160, 125, 100, 80, 60, 50, 40, 30, 25, 20, 15, 13, 10, 8, 6, 5, 4, 3)) {
-            out.add(ParamOption((1 shl 16) or den, "1/$den"))
+            val raw = Math.round(10_000.0 / den).toInt()
+            out.add(ParamOption(raw, "1/$den"))
         }
         for (sec in intArrayOf(1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30)) {
-            out.add(ParamOption((sec shl 16) or 1, "${sec}s"))
+            out.add(ParamOption(sec * 10_000, "${sec}s"))
         }
         return out
     }
@@ -541,6 +580,13 @@ class NikonLinkRepository private constructor(private val app: Application) {
             2500, 3200, 4000, 5000, 6400, 8000, 10000, 12800, 16000, 20000, 25600, 51200,
         ).map { ParamOption(it, it.toString()) }
         "shutter" -> shutterOptions()
+        "wb" -> listOf(2, 4, 5, 6, 7, 32784, 32785, 32786, 32787).map { ParamOption(it, labelFor("wb", it)) }
+        "drive" -> listOf(1, 2).map { ParamOption(it, labelFor("drive", it)) }
+        // Fallback: -5..+5 EV in 1/3-stop steps, in 1/1000 EV units.
+        "ev" -> listOf(-5000, -4666, -4333, -4000, -3666, -3333, -3000, -2666, -2333, -2000,
+            -1666, -1333, -1000, -666, -333, 0, 333, 666, 1000, 1333, 1666, 2000, 2333, 2666,
+            3000, 3333, 3666, 4000, 4333, 4666, 5000)
+            .map { raw -> ParamOption(raw, if (raw > 0) "+%.1f".format(raw / 1000.0) else "%.1f".format(raw / 1000.0)) }
         "mode" -> listOf(
             ParamOption(1, "M"), ParamOption(3, "A"), ParamOption(4, "S"),
             ParamOption(5, "P"), ParamOption(2, "AUTO"),
@@ -551,8 +597,21 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private fun labelFor(key: String, raw: Int): String = when (key) {
         "aperture" -> formatAperture(raw)
         "shutter" -> formatShutter(raw)
+        // Nikon exposes exposure bias as 1/1000 EV steps.
+        "ev" -> {
+            val ev = raw / 1000.0
+            if (ev > 0) "+%.1f".format(ev) else "%.1f".format(ev)
+        }
         "mode" -> when (raw) {
             1 -> "M"; 2 -> "AUTO"; 3 -> "A"; 4 -> "S"; 5 -> "P"; else -> raw.toString()
+        }
+        "wb" -> when (raw) {
+            0, 2 -> "自动"; 3 -> "一键"; 4 -> "晴天"; 5 -> "荧光"; 6 -> "白炽"; 7 -> "闪光"
+            32784 -> "阴天"; 32785 -> "阴影"; 32786 -> "色温"; 32787 -> "预设"
+            else -> "WB $raw"
+        }
+        "drive" -> when (raw) {
+            1 -> "单张"; 2 -> "连拍"; 3 -> "定时"; 4 -> "安静"; else -> "模式 $raw"
         }
         else -> raw.toString()
     }
@@ -563,7 +622,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
             Triple("mode", "挡位", 0x500E),
             Triple("aperture", "光圈", 0x5007),
             Triple("iso", "ISO", 0x500F),
-            Triple("shutter", "快门", 0xD100),
+            Triple("shutter", "快门", 0x500D),
+            Triple("ev", "曝光补偿", 0x5010),
+            Triple("wb", "白平衡", 0x5005),
+            Triple("drive", "驱动模式", 0x5013),
         )
         val out = ArrayList<CameraControl>()
         for ((key, label, prop) in defs) {
@@ -605,13 +667,14 @@ class NikonLinkRepository private constructor(private val app: Application) {
                     }
                 }
             }
-            // Shutter's descriptor is a packed fraction list, not a usable range.
+            // Shutter's descriptor form is not a plain range; use the standard list.
             if (key == "shutter" || options.isEmpty()) {
                 options.clear()
                 options.addAll(defaultsFor(key))
-                if (type == 0) type = 0x0006
+                if (key == "shutter") type = 0x0006
+                if (type == 0) type = 0x0004
             }
-            // Z50II rejects 0xD100 writes with 0x201C; keep it display-only.
+            // 0x500D advertises Get/Set in M mode but still rejects writes with 0x201C.
             if (key == "shutter") writable = false
             // Only keep the modes a Z body actually exposes.
             if (key == "mode") {
@@ -620,22 +683,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
             // The descriptor's "current" field is an index for some Nikon props;
             // read the real value through GetDevicePropValue instead.
             val szNow = typeSize(type)
-            // Shutter display comes from 0x500D; 0xD100 is only the write channel.
-            val valueProp = if (key == "shutter") 0x500D else prop
+            val valueProp = prop
             if (szNow > 0) {
                 val rawValue = runCatching { client.readProp(valueProp) }.getOrNull()
                 if (rawValue != null && rawValue.size >= szNow) {
+                    // 0x500D reports 0.1 ms units directly; the list matches it.
                     current = readTyped(rawValue, 0, type)
-                    // 0x500D is exposure time in microseconds; the OSD and 0xD100
-                    // both speak the packed num<<16|den fraction.
-                    if (key == "shutter" && current > 0) {
-                        val us = current * 100L
-                        current = if (us >= 1_000_000) {
-                            ((us / 1_000_000) shl 16).toInt() or 1
-                        } else {
-                            (1 shl 16) or Math.round(1_000_000.0 / us).toInt()
-                        }
-                    }
                 }
             }
             out.add(CameraControl(key, label, prop, type, current, writable, options))
@@ -686,6 +739,20 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     /** Keeps the overlay in sync with dial changes made on the body. */
+    /** Applies the chosen preview size/compression (takes effect on the next frame). */
+    fun applyLiveViewQuality() {
+        scope.launch(Dispatchers.IO) { applyLiveViewQualityBlocking() }
+    }
+
+    private suspend fun applyLiveViewQualityBlocking() = withContext(Dispatchers.IO) {
+        val q = settings.liveViewQuality.value
+        val size = if (q == 0) 2 else 3
+        val compression = if (q == 2) 4 else 0
+        runCatching { client.writeProp(Ptp.PROP_LIVE_VIEW_IMAGE_SIZE, byteArrayOf(size.toByte())) }
+        runCatching { client.writeProp(Ptp.PROP_LIVE_VIEW_IMAGE_COMPRESSION, byteArrayOf(compression.toByte())) }
+        Diagnostics.log("取景画质档位=$q (size=$size, compression=$compression)")
+    }
+
     private fun startParamRefresh() {
         paramJob?.cancel()
         paramJob = scope.launch {
@@ -693,6 +760,61 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 delay(2500)
                 if (liveViewPaused || captureInFlight) continue
                 runCatching { refreshRemoteInfo(quiet = true) }
+            }
+        }
+    }
+
+    @Volatile
+    private var afBusy = false
+
+    /** AF-ON: run autofocus without touching the shutter. */
+    fun afOn() {
+        if (afBusy) return
+        scope.launch {
+            afBusy = true
+            liveViewPaused = true
+            try {
+                // The body answers DeviceBusy while a previous AF cycle runs.
+                var result = runCatching { client.afDrive() }
+                if (result.exceptionOrNull()?.let { humanError(it) }?.contains("DeviceBusy") == true) {
+                    delay(350)
+                    result = runCatching { client.afDrive() }
+                }
+                Diagnostics.log("AF-ON -> " + (result.exceptionOrNull()?.let { humanError(it) } ?: "OK"))
+            } finally {
+                liveViewPaused = false
+                afBusy = false
+            }
+        }
+    }
+
+    /** Tap-to-focus: move the live-view AF point, then drive AF. */
+    fun focusAt(normalizedX: Float, normalizedY: Float) {
+        if (afBusy) return
+        scope.launch {
+            afBusy = true
+            val x = (normalizedX.coerceIn(0f, 1f) * 1023).toInt()
+            val y = (normalizedY.coerceIn(0f, 1f) * 767).toInt()
+            liveViewPaused = true
+            try {
+                var move = runCatching { client.changeAfArea(x, y) }
+                if (move.exceptionOrNull()?.let { humanError(it) }?.contains("DeviceBusy") == true) {
+                    delay(350)
+                    move = runCatching { client.changeAfArea(x, y) }
+                }
+                Diagnostics.log(
+                    "点选对焦 ($x, $y) -> " +
+                        (move.exceptionOrNull()?.let { humanError(it) } ?: "OK"),
+                )
+                if (move.isSuccess) {
+                    val focus = runCatching { client.afDrive() }
+                    Diagnostics.log(
+                        "AF-ON -> " + (focus.exceptionOrNull()?.let { humanError(it) } ?: "OK"),
+                    )
+                }
+            } finally {
+                liveViewPaused = false
+                afBusy = false
             }
         }
     }
@@ -718,6 +840,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 val writable = data[4].toInt() == 1
                 val head = data.take(10).joinToString(" ") { "%02X".format(it.toInt() and 0xFF) }
                 Diagnostics.log("属性 0x${code.toString(16)} $label -> ${if (writable) "可写" else "只读"} 头=$head")
+                if (code == 0x5010 || code == 0x5005 || code == 0x5013) {
+                    Diagnostics.log(
+                        "描述 0x${code.toString(16)} 全量=" +
+                            data.take(40).joinToString(" ") { "%02X".format(it.toInt() and 0xFF) },
+                    )
+                }
             }
             Diagnostics.log("属性探测完成")
         }
@@ -852,7 +980,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private var connectJob: Job? = null
     private var reconnectJob: Job? = null
     private var keepAliveJob: Job? = null
-    private var downloadJob: Job? = null
     private var userDisconnected = false
     private var currentHost: String = ""
 
@@ -1065,7 +1192,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
         reconnectJob?.cancel()
         reconnectJob = null
         keepAliveJob?.cancel()
-        downloadJob?.cancel()
         ConnectionService.stop(app)
         wifi.releaseLock()
         // Flip the UI immediately; the PTP CloseSession below is a network round trip.
@@ -1391,26 +1517,113 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
+    private val videoPosterCache = HashMap<String, ByteArray>()
+
+    /** Poster frame for an already-imported movie, used when the body has no thumb. */
+    suspend fun videoPoster(name: String): ByteArray? = withContext(Dispatchers.IO) {
+        videoPosterCache[name]?.let { return@withContext it }
+        val uri = findVideoUri(name) ?: return@withContext null
+        val bytes = runCatching {
+            val retriever = android.media.MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(app, uri)
+                val frame = retriever.getFrameAtTime(1_000_000) ?: retriever.getFrameAtTime(0)
+                    ?: return@runCatching null
+                java.io.ByteArrayOutputStream().use { out ->
+                    frame.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                    out.toByteArray()
+                }
+            } finally {
+                retriever.release()
+            }
+        }.getOrNull()
+        if (bytes != null) videoPosterCache[name] = bytes
+        bytes
+    }
+
+    private fun findVideoUri(name: String): android.net.Uri? = runCatching {
+        val projection = arrayOf(android.provider.MediaStore.Video.Media._ID)
+        val selection = "${android.provider.MediaStore.Video.Media.DISPLAY_NAME}=?"
+        app.contentResolver.query(
+            android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            selection,
+            arrayOf(name),
+            null,
+        )?.use { cursor ->
+            if (!cursor.moveToFirst()) null
+            else android.content.ContentUris.withAppendedId(
+                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                cursor.getLong(0),
+            )
+        }
+    }.getOrNull()
+
     // -------------------------------------------------------------- transfers
 
+    private val pendingFiles = ArrayDeque<CameraFile>()
+    private val pendingLock = Any()
+    private var queueWorker: Job? = null
+
+    private val _queueCount = MutableStateFlow(0)
+    val queueCount: StateFlow<Int> = _queueCount
+
+    /**
+     * Adds [files] to the background transfer queue. The worker keeps running while
+     * the user switches pages, and only one file hits the wire at a time.
+     */
     fun download(files: List<CameraFile>, force: Boolean = false) {
         if (files.isEmpty()) return
-        downloadJob?.cancel()
-        _failedFiles.value = emptyList()
         val expanded = if (settings.pairJpeg.value) expandRawJpegPairs(files) else files
-        downloadJob = scope.launch {
+        synchronized(pendingLock) {
+            for (file in expanded) {
+                if (pendingFiles.none { it.handle == file.handle }) pendingFiles.addLast(file)
+            }
+            _queueCount.value = pendingFiles.size
+        }
+        startQueueWorker()
+    }
+
+    private fun startQueueWorker() {
+        if (queueWorker?.isActive == true) return
+        queueWorker = scope.launch {
             downloadMutex.withLock {
                 val chunk = settings.chunkSize.value
                 val partial = _profile.value?.supportsPartialObject ?: true
-                val result = downloader.download(client, expanded, chunk, force, partial) { p ->
-                    _progress.value = p
+                while (true) {
+                    val next = synchronized(pendingLock) {
+                        pendingFiles.removeFirstOrNull().also { _queueCount.value = pendingFiles.size }
+                    } ?: break
+                    val result = runCatching {
+                        downloader.download(client, listOf(next), chunk, force = false, partial) { p ->
+                            _progress.value = p
+                        }
+                    }.getOrNull()
+                    if (result != null) {
+                        if (result.failed.isNotEmpty()) {
+                            _failedFiles.value = _failedFiles.value + result.failed
+                        }
+                        result.lastUri?.let { _lastUri.value = it }
+                    } else {
+                        _failedFiles.value = _failedFiles.value + next
+                    }
+                    _importsVersion.value++
+                    refreshIdentityStorage()
                 }
-                _failedFiles.value = result.failed
-                _lastUri.value = result.lastUri
-                _importsVersion.value++
-                refreshIdentityStorage()
+                _progress.value = _progress.value.copy(active = false, message = "传输队列已完成")
             }
         }
+    }
+
+    /** Resolves and opens an already-imported video; false when it is not on the phone. */
+    fun openVideo(file: CameraFile): Boolean {
+        val uri = findVideoUri(file.name) ?: return false
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "video/*")
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return runCatching { app.startActivity(intent); true }.getOrDefault(false)
     }
 
     /** Re-runs only the files that failed last time. */
@@ -1427,7 +1640,11 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     fun cancelDownloads() {
-        val job = downloadJob
+        synchronized(pendingLock) {
+            pendingFiles.clear()
+            _queueCount.value = 0
+        }
+        val job = queueWorker
         if (job != null && job.isActive) {
             job.cancel()
             _progress.value = _progress.value.copy(active = false, message = "已取消，已下载部分保留为断点")

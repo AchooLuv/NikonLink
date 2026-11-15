@@ -95,6 +95,12 @@ object Ptp {
     const val OP_NIKON_GET_LIVE_VIEW_IMAGE = 0x9203
 
     /** Nikon vendor op: GetLiveViewImageEx (0x9428) — Z bodies' frame getter. */
+    /** Nikon AF drive (AF-ON): no params, no data. */
+    const val OP_NIKON_AF_DRIVE = 0x90C1
+
+    /** Nikon ChangeAfArea: two params, live-view x/y. */
+    const val OP_NIKON_CHANGE_AF_AREA = 0x9205
+
     const val OP_NIKON_GET_LIVE_VIEW_IMAGE_EX = 0x9428
 
     /** Nikon vendor op: ChangeApplicationMode (0x9435); Z bodies need mode 1 for remote writes. */

@@ -182,7 +182,28 @@ class SettingsStore(context: Context) {
         mode.value = ConnectMode.AP
     }
 
-    companion object {
+        /** 0 = 流畅 (VGA), 1 = 标准 (XGA), 2 = 高画质 (XGA Fine). */
+    val liveViewQuality = MutableStateFlow(prefs.getInt(KEY_LV_QUALITY, 1))
+    val focusPeaking = MutableStateFlow(prefs.getBoolean(KEY_PEAKING, false))
+    val gridLines = MutableStateFlow(prefs.getBoolean(KEY_GRID, false))
+
+    fun setLiveViewQuality(value: Int) {
+        val safe = value.coerceIn(0, 2)
+        liveViewQuality.value = safe
+        prefs.edit().putInt(KEY_LV_QUALITY, safe).apply()
+    }
+
+    fun setFocusPeaking(enabled: Boolean) {
+        focusPeaking.value = enabled
+        prefs.edit().putBoolean(KEY_PEAKING, enabled).apply()
+    }
+
+    fun setGridLines(enabled: Boolean) {
+        gridLines.value = enabled
+        prefs.edit().putBoolean(KEY_GRID, enabled).apply()
+    }
+
+companion object {
         private const val KEY_AUTO_PULL = "auto_pull"
         private const val KEY_KEEP_ALIVE = "keep_alive"
         private const val KEY_RAW_THUMBS = "raw_thumbs"
@@ -190,6 +211,9 @@ class SettingsStore(context: Context) {
         private const val KEY_CHUNK = "chunk_size"
         private const val KEY_KEEPALIVE_SECONDS = "keepalive_seconds"
     private const val KEY_SELF_TIMER = "self_timer_seconds"
+    private const val KEY_LV_QUALITY = "lv_quality"
+    private const val KEY_PEAKING = "focus_peaking"
+    private const val KEY_GRID = "grid_lines"
         private const val KEY_SSID = "last_ssid"
         private const val KEY_PASS = "last_pass"
         private const val KEY_HOST = "last_host"
