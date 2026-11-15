@@ -27,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -322,6 +323,67 @@ class NikonLinkRepository private constructor(private val app: Application) {
         intervalJob = null
     }
 
+    private var burstJob: Job? = null
+
+    /** Press-and-hold shutter: keep triggering while the finger stays down. */
+    /** True only when the body is set to continuous drive. */
+    fun isBurstDrive(): Boolean = _controls.value.firstOrNull { it.key == "drive" }?.current == 2
+
+    /** Reads drive mode from the body so a stale cached control cannot mis-gate burst. */
+    suspend fun driveIsContinuousNow(): Boolean = withContext(Dispatchers.IO) {
+        // Prefer the cached control (already verified working); reading the body is a fallback.
+        _controls.value.firstOrNull { it.key == "drive" }?.let { return@withContext it.current == 2 }
+        val raw = runCatching { client.readProp(0x5013) }.getOrNull()
+        if (raw != null && raw.size >= 2) {
+            val value = (raw[0].toInt() and 0xFF) or ((raw[1].toInt() and 0xFF) shl 8)
+            Diagnostics.log("驱动读取 0x5013=$value")
+            value == 2
+        } else {
+            isBurstDrive()
+        }
+    }
+
+    fun startBurst() {
+        if (burstJob?.isActive == true) return
+        burstJob = scope.launch {
+            var fired = 0
+            var misses = 0
+            val deadline = System.currentTimeMillis() + 15_000
+            _captureState.value = CaptureState.Busy
+            _captureNote.value = "连拍中…"
+            try {
+                while (isActive) {
+                    if (System.currentTimeMillis() > deadline) break
+                    if (_state.value !is ConnState.Connected) break
+                    val result = runCatching {
+                        client.capture(release = Ptp.NIKON_CAPTURE_NO_AF, destination = Ptp.NIKON_RELEASE_TO_CARD)
+                    }
+                    if (result.isSuccess) {
+                        fired++
+                        misses = 0
+                        _captureNote.value = "连拍中…（$fired 张）"
+                    } else {
+                        misses++
+                        if (misses >= 8) break
+                        delay(150)
+                        continue
+                    }
+                    delay(70)
+                }
+            } finally {
+                liveViewPaused = false
+                _captureState.value = if (fired > 0) CaptureState.Done else CaptureState.Failed
+                _captureNote.value = if (fired > 0) "连拍结束（$fired 张）" else "连拍未能触发"
+                Diagnostics.log("连拍结束，共 $fired 张")
+            }
+        }
+    }
+
+    fun stopBurst() {
+        burstJob?.cancel()
+        burstJob = null
+    }
+
     fun resetCaptureState() {
         _captureState.value = CaptureState.Idle
         _captureNote.value = null
@@ -480,8 +542,9 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     fun endRemote() {
-        // Leaving the page must not keep firing an interval sequence.
+        // Leaving the page must not keep firing an interval sequence or burst.
         stopInterval()
+        stopBurst()
         // Only undo what beginRemote actually started; on a plain capture page the
         // camera was never taken over, so touching live view here would disturb it.
         if (_remote.value == RemoteState.Idle) return
@@ -1597,7 +1660,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private var queueWorker: Job? = null
 
     private val _queueCount = MutableStateFlow(0)
-    val queueCount: StateFlow<Int> = _queueCount
 
     /**
      * Adds [files] to the background transfer queue. The worker keeps running while

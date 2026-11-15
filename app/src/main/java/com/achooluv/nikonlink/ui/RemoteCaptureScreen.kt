@@ -52,6 +52,9 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
@@ -62,6 +65,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -118,6 +123,7 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     val showTimer by repo.settings.showTimer.collectAsStateWithLifecycle()
     val controls by repo.controls.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var showModels by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<NikonLinkRepository.CameraControl?>(null) }
@@ -293,7 +299,7 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
             val mark = focusMark
             if (mark != null) {
                 androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-                    val half = 26.dp.toPx()
+                    val half = 14.dp.toPx()
                     val stroke = 2.dp.toPx()
                     drawRect(
                         color = NikonYellow,
@@ -419,7 +425,8 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                     val control = controls.find { it.key == key }
                     val writable = control?.writable == true
                     // Exposure compensation has no effect on exposure in M on Nikon bodies.
-                    val evBlocked = key == "ev" && info?.mode == "M"
+                    val evBlocked = key == "ev" &&
+                        (controls.find { it.key == "mode" }?.current == 1 || info?.mode == "M")
                     OsdCell(
                         label = label,
                         value = control?.let { controlLabel(it) } ?: (fallback ?: "—"),
@@ -499,9 +506,28 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                     .size(92.dp)
                     .clip(CircleShape)
                     .border(3.dp, if (busy) PaperDim else NikonYellow, CircleShape)
-                    .clickable(enabled = !busy) {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        repo.capture()
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown().also { it.consume() }
+                            var burst = false
+                            val starter = scope.launch {
+                                delay(280)
+                                if (!repo.driveIsContinuousNow()) return@launch
+                                burst = true
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                repo.startBurst()
+                            }
+                            try {
+                                waitForUpOrCancellation()
+                            } finally {
+                                starter.cancel()
+                                if (burst) repo.stopBurst()
+                            }
+                            if (!burst) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                repo.capture()
+                            }
+                        }
                     },
                 contentAlignment = Alignment.Center,
             ) {
