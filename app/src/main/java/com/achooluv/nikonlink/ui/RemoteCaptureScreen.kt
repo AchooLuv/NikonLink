@@ -7,6 +7,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
@@ -35,7 +37,9 @@ import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.BurstMode
 import androidx.compose.material.icons.rounded.CenterFocusStrong
 import androidx.compose.material.icons.rounded.GridOn
+import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Timelapse
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.AlertDialog
@@ -106,6 +110,12 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     val peaking by repo.settings.focusPeaking.collectAsStateWithLifecycle()
     val lvQuality by repo.settings.liveViewQuality.collectAsStateWithLifecycle()
     val intervalState by repo.interval.collectAsStateWithLifecycle()
+    val showGrid by repo.settings.showGrid.collectAsStateWithLifecycle()
+    val showPeaking by repo.settings.showPeaking.collectAsStateWithLifecycle()
+    val showWb by repo.settings.showWb.collectAsStateWithLifecycle()
+    val showDrive by repo.settings.showDrive.collectAsStateWithLifecycle()
+    val showInterval by repo.settings.showInterval.collectAsStateWithLifecycle()
+    val showTimer by repo.settings.showTimer.collectAsStateWithLifecycle()
     val controls by repo.controls.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val context = LocalContext.current
@@ -113,6 +123,8 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     var editing by remember { mutableStateOf<NikonLinkRepository.CameraControl?>(null) }
     var editingDelay by remember { mutableStateOf(false) }
     var editingInterval by remember { mutableStateOf(false) }
+    var showTools by remember { mutableStateOf(false) }
+    var focusMark by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
 
     BackHandler { onClose() }
     LaunchedEffect(Unit) { repo.beginRemote() }
@@ -123,15 +135,30 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
         }
     }
 
+    LaunchedEffect(focusMark) {
+        if (focusMark != null) {
+            kotlinx.coroutines.delay(1500)
+            focusMark = null
+        }
+    }
     val busy = capture == NikonLinkRepository.CaptureState.Busy
+    val wbControl = controls.find { it.key == "wb" }
+    val driveControl = controls.find { it.key == "drive" }
     val frame by produceState<ImageBitmap?>(initialValue = null, shot) {
         value = shot?.let { bytes ->
             withContext(Dispatchers.Default) { runCatching { decodeSampled(bytes, 1400)?.asImageBitmap() }.getOrNull() }
         }
     }
     val peakingFrame by produceState<ImageBitmap?>(initialValue = null, previewBytes, peaking) {
-        value = if (!peaking) null else previewBytes?.let { bytes ->
-            withContext(Dispatchers.Default) { runCatching { renderPeaking(bytes)?.asImageBitmap() }.getOrNull() }
+        // Edge detection is the heaviest per-frame work; cap it at ~8 fps.
+        val now = System.currentTimeMillis()
+        if (!peaking) {
+            value = null
+        } else if (now - lastPeakingAt >= 120) {
+            lastPeakingAt = now
+            value = previewBytes?.let { bytes ->
+                withContext(Dispatchers.Default) { runCatching { renderPeaking(bytes)?.asImageBitmap() }.getOrNull() }
+            }
         }
     }
     val liveFrame by produceState<ImageBitmap?>(initialValue = null, previewBytes) {
@@ -182,6 +209,9 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
             ) {
                 Text("机型支持", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
             }
+            IconButton(onClick = { showTools = true }) {
+                Icon(Icons.Rounded.Tune, contentDescription = "遥拍页设置", tint = PaperDim)
+            }
         }
 
         Spacer(Modifier.height(12.dp))
@@ -194,6 +224,7 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
                         if (size.width > 0 && size.height > 0 && liveFrame != null) {
+                            focusMark = offset
                             repo.focusAt(offset.x / size.width, offset.y / size.height)
                         }
                     }
@@ -245,6 +276,44 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                 }
             }
 
+            if (gridLines) {
+                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                    val stroke = 1.dp.toPx()
+                    val color = Color(0x66FFFFFF)
+                    for (i in 1..2) {
+                        val x = size.width * i / 3f
+                        val y = size.height * i / 3f
+                        drawLine(color, androidx.compose.ui.geometry.Offset(x, 0f),
+                            androidx.compose.ui.geometry.Offset(x, size.height), stroke)
+                        drawLine(color, androidx.compose.ui.geometry.Offset(0f, y),
+                            androidx.compose.ui.geometry.Offset(size.width, y), stroke)
+                    }
+                }
+            }
+            val mark = focusMark
+            if (mark != null) {
+                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                    val half = 26.dp.toPx()
+                    val stroke = 2.dp.toPx()
+                    drawRect(
+                        color = NikonYellow,
+                        topLeft = androidx.compose.ui.geometry.Offset(mark.x - half, mark.y - half),
+                        size = androidx.compose.ui.geometry.Size(half * 2, half * 2),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(stroke),
+                    )
+                }
+            }
+            val peakOverlay = peakingFrame
+            if (peakOverlay != null) {
+                Image(
+                    bitmap = peakOverlay,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    alpha = 0.8f,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+
             val modeControl = controls.find { it.key == "mode" }
             Box(
                 Modifier
@@ -265,49 +334,6 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                     fontWeight = FontWeight.Bold,
                 )
             }
-            Text(
-                listOf("流畅", "标准", "高画质")[lvQuality.coerceIn(0, 2)],
-                color = Color(0xCCFFFFFF),
-                fontSize = 11.sp,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 54.dp, top = 12.dp)
-                    .clickable {
-                        val next = (lvQuality + 1) % 3
-                        repo.settings.setLiveViewQuality(next)
-                        repo.applyLiveViewQuality()
-                        android.widget.Toast.makeText(
-                            context,
-                            "取景画质：" + listOf("流畅", "标准", "高画质")[next],
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    },
-            )
-
-            if (gridLines) {
-                Canvas(Modifier.fillMaxSize()) {
-                    val stroke = 1.dp.toPx()
-                    val color = Color(0x66FFFFFF)
-                    for (i in 1..2) {
-                        val x = size.width * i / 3f
-                        val y = size.height * i / 3f
-                        drawLine(color, androidx.compose.ui.geometry.Offset(x, 0f),
-                            androidx.compose.ui.geometry.Offset(x, size.height), stroke)
-                        drawLine(color, androidx.compose.ui.geometry.Offset(0f, y),
-                            androidx.compose.ui.geometry.Offset(size.width, y), stroke)
-                    }
-                }
-            }
-            val peakBitmap = peakingFrame
-            if (peakBitmap != null) {
-                Image(
-                    bitmap = peakBitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alpha = 0.8f,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
 
             Row(
                 Modifier.align(Alignment.TopEnd).padding(8.dp),
@@ -316,39 +342,56 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
             ) {
                 val wbControl = controls.find { it.key == "wb" }
                 val driveControl = controls.find { it.key == "drive" }
-                ToolIcon(
-                    icon = Icons.Rounded.Timelapse,
-                    description = "间隔拍摄",
-                    enabled = true,
-                    onClick = {
-                        if (intervalState.running) repo.stopInterval() else editingInterval = true
-                    },
-                )
-                ToolIcon(
-                    icon = Icons.Rounded.GridOn,
-                    description = "网格线",
-                    enabled = true,
-                    onClick = { repo.settings.setGridLines(!gridLines) },
-                )
-                ToolIcon(
-                    icon = Icons.Rounded.CenterFocusStrong,
-                    description = "峰值对焦",
-                    enabled = true,
-                    onClick = { repo.settings.setFocusPeaking(!peaking) },
-                )
-                ToolIcon(
-                    icon = Icons.Rounded.WbSunny,
-                    description = "白平衡",
-                    enabled = wbControl?.writable == true,
-                    onClick = { editing = wbControl },
-                )
-                ToolIcon(
-                    icon = Icons.Rounded.BurstMode,
-                    description = "驱动模式",
-                    enabled = driveControl?.writable == true,
-                    onClick = { editing = driveControl },
-                )
-                SelfTimerPill(seconds = selfTimer, onClick = { editingDelay = true })
+                if (showInterval) {
+                    ToolIcon(
+                        icon = Icons.Rounded.Timelapse,
+                        description = "间隔拍摄",
+                        enabled = true,
+                        active = intervalState.running,
+                        onClick = {
+                            if (intervalState.running) repo.stopInterval() else editingInterval = true
+                        },
+                    )
+                }
+                if (showGrid) {
+                    ToolIcon(
+                        icon = Icons.Rounded.GridOn,
+                        description = "网格线",
+                        enabled = true,
+                        active = gridLines,
+                        onClick = { repo.settings.setGridLines(!gridLines) },
+                    )
+                }
+                if (showPeaking) {
+                    ToolIcon(
+                        icon = Icons.Rounded.CenterFocusStrong,
+                        description = "峰值对焦",
+                        enabled = true,
+                        active = peaking,
+                        onClick = { repo.settings.setFocusPeaking(!peaking) },
+                    )
+                }
+                if (showWb) {
+                    ToolIcon(
+                        icon = Icons.Rounded.WbSunny,
+                        description = "白平衡",
+                        enabled = true,
+                        active = (wbControl?.current ?: 2) != 2,
+                        onClick = { if (wbControl?.writable == true) editing = wbControl },
+                    )
+                }
+                if (showDrive) {
+                    ToolIcon(
+                        icon = Icons.Rounded.BurstMode,
+                        description = "驱动模式",
+                        enabled = true,
+                        active = (driveControl?.current ?: 1) != 1,
+                        onClick = { if (driveControl?.writable == true) editing = driveControl },
+                    )
+                }
+                if (showTimer) {
+                    SelfTimerPill(seconds = selfTimer, onClick = { editingDelay = true }, active = selfTimer != 0)
+                }
             }
 
             // Camera-style OSD: main row + secondary row under one gradient.
@@ -375,14 +418,24 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                 cells.forEach { (key, label, fallback) ->
                     val control = controls.find { it.key == key }
                     val writable = control?.writable == true
+                    // Exposure compensation has no effect on exposure in M on Nikon bodies.
+                    val evBlocked = key == "ev" && info?.mode == "M"
                     OsdCell(
                         label = label,
                         value = control?.let { controlLabel(it) } ?: (fallback ?: "—"),
-                        enabled = writable,
+                        enabled = writable && !evBlocked,
                         onClick = if (writable) {
                             {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                editing = control
+                                if (evBlocked) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "M 挡下曝光补偿只影响测光，不改变曝光",
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                } else {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    editing = control
+                                }
                             }
                         } else null,
                         modifier = Modifier.weight(1f),
@@ -421,21 +474,26 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
             Modifier.fillMaxWidth().padding(bottom = 26.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                "AF",
-                color = if (busy) PaperDim else Paper,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(64.dp)
                     .clip(CircleShape)
-                    .border(1.dp, if (busy) PaperDim else Color(0x66FFFFFF), CircleShape)
+                    .background(InkRaised)
+                    .border(1.5.dp, if (busy) PaperDim else Color(0x99FFFFFF), CircleShape)
                     .clickable(enabled = !busy) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         repo.afOn()
-                    }
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-            )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "AF",
+                    color = if (busy) PaperDim else Paper,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
             Box(
                 Modifier
                     .size(92.dp)
@@ -484,6 +542,15 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
             )
         }
     }
+    if (showTools) {
+        ModalBottomSheet(
+            onDismissRequest = { showTools = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = InkRaised,
+        ) {
+            RemoteToolsSheet(repo = repo, onDismiss = { showTools = false })
+        }
+    }
     if (editingInterval) {
         ModalBottomSheet(
             onDismissRequest = { editingInterval = false },
@@ -528,6 +595,7 @@ private fun ToolIcon(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     description: String,
     enabled: Boolean,
+    active: Boolean = false,
     onClick: () -> Unit,
 ) {
     Box(
@@ -539,7 +607,11 @@ private fun ToolIcon(
         Icon(
             icon,
             contentDescription = description,
-            tint = Color.White.copy(alpha = if (enabled) 1f else 0.35f),
+            tint = when {
+                !enabled -> Color.White.copy(alpha = 0.35f)
+                active -> NikonYellow
+                else -> Color.White
+            },
             modifier = Modifier.size(20.dp),
         )
     }
@@ -602,9 +674,111 @@ private fun PickChip(label: String, selected: Boolean, onClick: () -> Unit) {
     )
 }
 
+
+@Composable
+private fun RemoteToolsSheet(repo: NikonLinkRepository, onDismiss: () -> Unit) {
+    val s = repo.settings
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 40.dp),
+    ) {
+        Text("工具", color = Paper, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text("默认全部关闭，打开后才会在画面上出现图标", color = NikonLinkTheme.colors.dim, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+        QualityRow(s, repo)
+        ToolRow(Icons.Rounded.Timelapse, "间隔拍摄", s.showInterval.collectAsStateWithLifecycle().value) {
+            s.setShowInterval(it)
+        }
+        ToolRow(Icons.Rounded.GridOn, "网格线", s.showGrid.collectAsStateWithLifecycle().value) {
+            s.setShowGrid(it)
+        }
+        ToolRow(Icons.Rounded.CenterFocusStrong, "峰值对焦", s.showPeaking.collectAsStateWithLifecycle().value) {
+            s.setShowPeaking(it)
+        }
+        ToolRow(Icons.Rounded.WbSunny, "白平衡", s.showWb.collectAsStateWithLifecycle().value) {
+            s.setShowWb(it)
+        }
+        ToolRow(Icons.Rounded.BurstMode, "驱动模式", s.showDrive.collectAsStateWithLifecycle().value) {
+            s.setShowDrive(it)
+        }
+        ToolRow(Icons.Rounded.Timer, "延迟拍摄", s.showTimer.collectAsStateWithLifecycle().value) {
+            s.setShowTimer(it)
+        }
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+
+@Composable
+private fun QualityRow(s: com.achooluv.nikonlink.data.SettingsStore, repo: NikonLinkRepository) {
+    val quality by s.liveViewQuality.collectAsStateWithLifecycle()
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.HighQuality,
+            contentDescription = null,
+            tint = PaperDim,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text("取景画质", color = Paper, fontSize = 14.sp)
+        Spacer(Modifier.weight(1f))
+        listOf("流畅", "标准", "高画质").forEachIndexed { index, label ->
+            Text(
+                label,
+                color = if (quality == index) Color(0xFF161200) else PaperDim,
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .padding(start = 6.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (quality == index) NikonYellow else Ink)
+                    .clickable {
+                        s.setLiveViewQuality(index)
+                        repo.applyLiveViewQuality()
+                    }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToolRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = PaperDim, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(label, color = Paper, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        androidx.compose.material3.Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = androidx.compose.material3.SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF161200),
+                checkedTrackColor = NikonYellow,
+            ),
+        )
+    }
+}
+
 /** Self-timer entry: timer icon when off, the chosen seconds otherwise. */
 @Composable
-private fun SelfTimerPill(seconds: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun SelfTimerPill(
+    seconds: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+) {
     Box(
         modifier
             .clip(RoundedCornerShape(10.dp))
@@ -622,7 +796,7 @@ private fun SelfTimerPill(seconds: Int, onClick: () -> Unit, modifier: Modifier 
         } else {
             Text(
                 "${seconds}s",
-                color = Color.White,
+                color = if (active) NikonYellow else Color.White,
                 fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
             )
@@ -715,6 +889,8 @@ private fun renderPeaking(bytes: ByteArray): android.graphics.Bitmap? {
     return overlay
 }
 
+private var lastPeakingAt = 0L
+
 /** Decodes a JPEG down to roughly [maxDim] px, so a 24 MP shot is never fully inflated. */
 private fun decodeSampled(bytes: ByteArray, maxDim: Int): android.graphics.Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -746,7 +922,7 @@ private fun RulerPicker(
     val centered = position.roundToInt().coerceIn(0, options.lastIndex)
     val density = androidx.compose.ui.platform.LocalDensity.current
     // Few options need wider spacing so every label stays readable.
-    val stepDp = if (options.size <= 6) 56.dp else 22.dp
+    val stepDp = if (options.size <= 8) 56.dp else 22.dp
     val stepPx = with(density) { stepDp.toPx() }
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {

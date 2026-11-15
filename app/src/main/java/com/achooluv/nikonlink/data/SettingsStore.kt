@@ -24,6 +24,19 @@ class SettingsStore(context: Context) {
     private var pendingImportWrites = 0
 
     init {
+        // v2: every tool starts hidden and the preview starts at 流畅.
+        if (!prefs.getBoolean(KEY_TOOLS_V2, false)) {
+            prefs.edit()
+                .putBoolean(KEY_SHOW_GRID, false)
+                .putBoolean(KEY_SHOW_PEAK, false)
+                .putBoolean(KEY_SHOW_WB, false)
+                .putBoolean(KEY_SHOW_DRIVE, false)
+                .putBoolean(KEY_SHOW_INTERVAL, false)
+                .putBoolean(KEY_SHOW_TIMER, false)
+                .putInt(KEY_LV_QUALITY, 0)
+                .putBoolean(KEY_TOOLS_V2, true)
+                .apply()
+        }
         migrateLegacyHost()
     }
 
@@ -183,7 +196,7 @@ class SettingsStore(context: Context) {
     }
 
         /** 0 = 流畅 (VGA), 1 = 标准 (XGA), 2 = 高画质 (XGA Fine). */
-    val liveViewQuality = MutableStateFlow(prefs.getInt(KEY_LV_QUALITY, 1))
+    val liveViewQuality = MutableStateFlow(prefs.getInt(KEY_LV_QUALITY, 0))
     val focusPeaking = MutableStateFlow(prefs.getBoolean(KEY_PEAKING, false))
     val gridLines = MutableStateFlow(prefs.getBoolean(KEY_GRID, false))
 
@@ -197,6 +210,42 @@ class SettingsStore(context: Context) {
         focusPeaking.value = enabled
         prefs.edit().putBoolean(KEY_PEAKING, enabled).apply()
     }
+
+    val showGrid = MutableStateFlow(prefs.getBoolean(KEY_SHOW_GRID, false))
+    val showPeaking = MutableStateFlow(prefs.getBoolean(KEY_SHOW_PEAK, false))
+    val showWb = MutableStateFlow(prefs.getBoolean(KEY_SHOW_WB, false))
+    val showDrive = MutableStateFlow(prefs.getBoolean(KEY_SHOW_DRIVE, false))
+    val showInterval = MutableStateFlow(prefs.getBoolean(KEY_SHOW_INTERVAL, false))
+    val showTimer = MutableStateFlow(prefs.getBoolean(KEY_SHOW_TIMER, false))
+
+    /** One-shot reset (v3): hide every tool and start previews at 流畅. */
+    fun applyToolDefaultsOnce() {
+        if (prefs.getBoolean(KEY_TOOLS_V3, false)) return
+        showGrid.value = false
+        showPeaking.value = false
+        showWb.value = false
+        showDrive.value = false
+        showInterval.value = false
+        showTimer.value = false
+        liveViewQuality.value = 0
+        prefs.edit()
+            .putBoolean(KEY_SHOW_GRID, false)
+            .putBoolean(KEY_SHOW_PEAK, false)
+            .putBoolean(KEY_SHOW_WB, false)
+            .putBoolean(KEY_SHOW_DRIVE, false)
+            .putBoolean(KEY_SHOW_INTERVAL, false)
+            .putBoolean(KEY_SHOW_TIMER, false)
+            .putInt(KEY_LV_QUALITY, 0)
+            .putBoolean(KEY_TOOLS_V3, true)
+            .apply()
+    }
+
+    fun setShowGrid(value: Boolean) { showGrid.value = value; prefs.edit().putBoolean(KEY_SHOW_GRID, value).apply() }
+    fun setShowPeaking(value: Boolean) { showPeaking.value = value; prefs.edit().putBoolean(KEY_SHOW_PEAK, value).apply() }
+    fun setShowWb(value: Boolean) { showWb.value = value; prefs.edit().putBoolean(KEY_SHOW_WB, value).apply() }
+    fun setShowDrive(value: Boolean) { showDrive.value = value; prefs.edit().putBoolean(KEY_SHOW_DRIVE, value).apply() }
+    fun setShowInterval(value: Boolean) { showInterval.value = value; prefs.edit().putBoolean(KEY_SHOW_INTERVAL, value).apply() }
+    fun setShowTimer(value: Boolean) { showTimer.value = value; prefs.edit().putBoolean(KEY_SHOW_TIMER, value).apply() }
 
     fun setGridLines(enabled: Boolean) {
         gridLines.value = enabled
@@ -212,6 +261,14 @@ companion object {
         private const val KEY_KEEPALIVE_SECONDS = "keepalive_seconds"
     private const val KEY_SELF_TIMER = "self_timer_seconds"
     private const val KEY_LV_QUALITY = "lv_quality"
+    private const val KEY_TOOLS_V2 = "tools_defaults_v2"
+    private const val KEY_TOOLS_V3 = "tools_defaults_v3"
+    private const val KEY_SHOW_GRID = "show_grid"
+    private const val KEY_SHOW_PEAK = "show_peaking"
+    private const val KEY_SHOW_WB = "show_wb"
+    private const val KEY_SHOW_DRIVE = "show_drive"
+    private const val KEY_SHOW_INTERVAL = "show_interval"
+    private const val KEY_SHOW_TIMER = "show_timer"
     private const val KEY_PEAKING = "focus_peaking"
     private const val KEY_GRID = "grid_lines"
         private const val KEY_SSID = "last_ssid"

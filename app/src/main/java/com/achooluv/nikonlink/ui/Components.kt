@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
@@ -25,6 +26,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -81,16 +83,21 @@ fun Badge(text: String, filled: Boolean = false) {
     val colors = NikonLinkTheme.colors
     Box(
         Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (filled) colors.accent else Color(0xCC101012))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .size(width = 30.dp, height = 15.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .background(if (filled) colors.accent else Color(0xCC101012)),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
             color = if (filled) Color(0xFF161200) else colors.accent,
-            fontSize = 9.sp,
+            fontSize = 7.5.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 0.6.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            style = androidx.compose.ui.text.TextStyle(
+                platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+            ),
         )
     }
 }

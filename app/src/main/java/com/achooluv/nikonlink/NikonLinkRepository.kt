@@ -68,6 +68,11 @@ internal fun reconnectDelaySeconds(attempt: Int): Int {
 class NikonLinkRepository private constructor(private val app: Application) {
 
     val settings = SettingsStore(app)
+    init {
+        // v3 defaults: every remote tool hidden, preview at 流畅.
+        settings.applyToolDefaultsOnce()
+    }
+
     val wifi = CameraWifi(app)
     private val downloader = Downloader(app, settings)
     // Stable identity: the camera remembers the pairing by this name, so it must not
@@ -432,43 +437,40 @@ class NikonLinkRepository private constructor(private val app: Application) {
         scope.launch {
             _remote.value = RemoteState.Starting
             _liveView.value = LiveViewState.Starting
+            val t0 = System.currentTimeMillis()
+            fun since() = "${System.currentTimeMillis() - t0}ms"
             try {
-                runCatching { client.clearEvents() }
-                runCatching { client.deleteAllSdram() }
-                val prohibit = runCatching { client.liveViewProhibit() }.getOrNull()
-                Diagnostics.log("LiveViewProhibit=0x${prohibit?.toString(16) ?: "?"}")
-
-                // Z bodies only accept remote writes once application mode is on;
-                // 0x9435 is the documented switch (mode 1 = host control).
+                // Startup must stay short: every transaction costs seconds on a weak
+                // link, so only the essential takeover steps are sequential here.
                 val appMode = runCatching { client.changeApplicationMode(1) }
                 Diagnostics.log("0x9435(1) ApplicationMode -> ${appMode.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
                 val mode = runCatching { client.changeCameraMode(1) }
                 Diagnostics.log("0x90C2(1) ChangeCameraMode -> ${mode.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
                 val selector = runCatching { client.writeProp(Ptp.PROP_LIVE_VIEW_SELECTOR, byteArrayOf(0)) }
-                Diagnostics.log("0xD1A6=0 LiveViewSelector -> ${selector.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
+                Diagnostics.log("0xD1A6=0 LiveViewSelector -> ${selector.exceptionOrNull()?.let { humanError(it) } ?: "OK"} @" + since())
                 applyLiveViewQualityBlocking()
 
                 val lv = runCatching { client.startLiveViewOnly() }
-                Diagnostics.log("0x9201 StartLiveView -> ${lv.exceptionOrNull()?.let { humanError(it) } ?: "OK"}")
+                Diagnostics.log("0x9201 StartLiveView -> ${lv.exceptionOrNull()?.let { humanError(it) } ?: "OK"} @" + since())
 
-                // DeviceReady polling: the body answers DeviceBusy while the live
-                // view pipeline spins up (gphoto calls this nikon_wait_busy).
+                // A few DeviceReady probes only; the frame loop tolerates slower starts.
                 var ready = false
-                repeat(20) {
-                    if (client.deviceReadyNow()) { ready = true; return@repeat }
-                    delay(100)
+                repeat(6) {
+                    if (!ready && runCatching { client.deviceReadyNow() }.getOrDefault(false)) {
+                        ready = true
+                    }
+                    if (!ready) delay(150)
                 }
-                Diagnostics.log("0x90C8 ready=$ready")
-                delay(300)
-                val status = runCatching { client.readPropByte(0xD1A2) }.getOrDefault(-1)
-                val cameraStatus = runCatching { client.readPropByte(Ptp.PROP_CAMERA_LIVE_VIEW_STATUS) }.getOrDefault(-1)
-                val imageStatus = runCatching { client.readPropByte(Ptp.PROP_LIVE_VIEW_IMAGE_STATUS) }.getOrDefault(-1)
-                Diagnostics.log("LiveViewStatus 0xD1A2=$status / 0xD1B8=$cameraStatus / 0xD1BB=$imageStatus")
-                refreshRemoteInfo()
-                refreshControls()
+                Diagnostics.log("0x90C8 ready=$ready @" + since() + ")")
+
+                // Hand control back to the page now; parameters catch up in the background.
                 _remote.value = RemoteState.Ready
                 startLiveViewPolling()
                 startParamRefresh()
+                scope.launch {
+                    runCatching { refreshControls() }
+                    runCatching { refreshRemoteInfo() }
+                }
             } catch (e: Exception) {
                 _remote.value = RemoteState.Failed
                 _liveView.value = LiveViewState.Failed
@@ -611,7 +613,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
             else -> "WB $raw"
         }
         "drive" -> when (raw) {
-            1 -> "单张"; 2 -> "连拍"; 3 -> "定时"; 4 -> "安静"; else -> "模式 $raw"
+            1 -> "单张"; 2 -> "连拍"; 3 -> "定时"; 4 -> "安静"; else -> "自定义"
         }
         else -> raw.toString()
     }
@@ -680,6 +682,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
             if (key == "mode") {
                 options.removeAll { it.raw !in setOf(1, 2, 3, 4, 5) }
             }
+            if (key == "drive") {
+                // Vendor-only codes (0x8000+) are not meaningful as choices.
+                options.removeAll { it.raw !in setOf(1, 2, 3, 4) }
+            }
             // The descriptor's "current" field is an index for some Nikon props;
             // read the real value through GetDevicePropValue instead.
             val szNow = typeSize(type)
@@ -699,6 +705,9 @@ class NikonLinkRepository private constructor(private val app: Application) {
         })
     }
 
+    /** Shows a one-line confirmation under the shutter. */
+    /** Hard resets used when a tool is switched off, independent of cached controls. */
+    /** Puts a control back to its default value (used when its tool is turned off). */
     /** Writes one parameter and refreshes the overlay values. */
     fun setControl(control: CameraControl, raw: Int) {
         scope.launch {
@@ -770,6 +779,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
     /** AF-ON: run autofocus without touching the shutter. */
     fun afOn() {
         if (afBusy) return
+        if (_remote.value != RemoteState.Ready) {
+            _captureNote.value = "取景还在启动，稍后再对焦"
+            return
+        }
         scope.launch {
             afBusy = true
             liveViewPaused = true
@@ -791,6 +804,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
     /** Tap-to-focus: move the live-view AF point, then drive AF. */
     fun focusAt(normalizedX: Float, normalizedY: Float) {
         if (afBusy) return
+        if (_remote.value != RemoteState.Ready) return
         scope.launch {
             afBusy = true
             val x = (normalizedX.coerceIn(0f, 1f) * 1023).toInt()
@@ -862,14 +876,17 @@ class NikonLinkRepository private constructor(private val app: Application) {
             var lastError: String? = null
             var windowStart = System.currentTimeMillis()
             var windowFrames = 0
+            var slowStreak = 0
             while (true) {
                 if (liveViewPaused) {
                     delay(60)
                     continue
                 }
+                val frameStarted = System.currentTimeMillis()
                 val attempt = runCatching {
                     if (legacy) client.liveViewImage() else client.liveViewImageEx()
                 }
+                val frameElapsed = System.currentTimeMillis() - frameStarted
                 if (!legacy && attempt.isFailure) {
                     val msg = attempt.exceptionOrNull()?.let { humanError(it) } ?: "?"
                     if (msg.contains("0x2005") || msg.contains("不支持")) {
@@ -881,6 +898,20 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 if (jpeg != null) {
                     frames++
                     failures = 0
+                    // A slow link plus Fine-quality frames (>100 KB) blocks every other
+                    // command behind the transfer, so drop quality by one step.
+                    if (frameElapsed > 2200) slowStreak++ else slowStreak = 0
+                    if (slowStreak >= 2) {
+                        slowStreak = 0
+                        val q = settings.liveViewQuality.value
+                        if (q > 0) {
+                            settings.setLiveViewQuality(q - 1)
+                            applyLiveViewQualityBlocking()
+                            _captureNote.value =
+                                "链路较慢，取景画质已降到 " + listOf("流畅", "标准", "高画质")[q - 1]
+                            Diagnostics.log("自动降画质 -> ${q - 1}（单帧 ${frameElapsed}ms）")
+                        }
+                    }
                     _preview.value = jpeg
                     if (frames == 1) {
                         _liveView.value = LiveViewState.Running
@@ -1591,11 +1622,15 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 val chunk = settings.chunkSize.value
                 val partial = _profile.value?.supportsPartialObject ?: true
                 while (true) {
-                    val next = synchronized(pendingLock) {
-                        pendingFiles.removeFirstOrNull().also { _queueCount.value = pendingFiles.size }
-                    } ?: break
+                    val batch = synchronized(pendingLock) {
+                        val list = pendingFiles.toList()
+                        pendingFiles.clear()
+                        _queueCount.value = 0
+                        list
+                    }
+                    if (batch.isEmpty()) break
                     val result = runCatching {
-                        downloader.download(client, listOf(next), chunk, force = false, partial) { p ->
+                        downloader.download(client, batch, chunk, force = false, partial) { p ->
                             _progress.value = p
                         }
                     }.getOrNull()
@@ -1605,7 +1640,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                         }
                         result.lastUri?.let { _lastUri.value = it }
                     } else {
-                        _failedFiles.value = _failedFiles.value + next
+                        _failedFiles.value = _failedFiles.value + batch
                     }
                     _importsVersion.value++
                     refreshIdentityStorage()
@@ -1615,17 +1650,41 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
-    /** Resolves and opens an already-imported video; false when it is not on the phone. */
-    fun openVideo(file: CameraFile): Boolean {
-        val uri = findVideoUri(file.name) ?: return false
+    /** Opens an imported photo or video from MediaStore; false when it is not there. */
+    fun openMedia(file: CameraFile): Boolean {
+        val uri = if (file.kind == com.achooluv.nikonlink.camera.FileKind.MOVIE) {
+            findVideoUri(file.name)
+        } else {
+            findImageUri(file.name)
+        } ?: return false
+        val mime = if (file.kind == com.achooluv.nikonlink.camera.FileKind.MOVIE) "video/*" else "image/*"
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "video/*")
+            setDataAndType(uri, mime)
             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         return runCatching { app.startActivity(intent); true }.getOrDefault(false)
     }
 
+    private fun findImageUri(name: String): android.net.Uri? = runCatching {
+        val projection = arrayOf(android.provider.MediaStore.Images.Media._ID)
+        val selection = "${android.provider.MediaStore.Images.Media.DISPLAY_NAME}=?"
+        app.contentResolver.query(
+            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            selection,
+            arrayOf(name),
+            null,
+        )?.use { cursor ->
+            if (!cursor.moveToFirst()) null
+            else android.content.ContentUris.withAppendedId(
+                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                cursor.getLong(0),
+            )
+        }
+    }.getOrNull()
+
+    /** Resolves and opens an already-imported video; false when it is not on the phone. */
     /** Re-runs only the files that failed last time. */
     fun retryFailed() {
         val failed = _failedFiles.value

@@ -425,14 +425,6 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     /** Raw 0x90C7 payload; the camera may queue events here instead of the socket. */
     fun getEventRaw(): ByteArray = collect(Ptp.OP_NIKON_GET_EVENT, IntArray(0))
 
-    /** LiveViewProhibitCondition (0xD1A4): bit 12 means a stale SDRAM shot blocks LV. */
-    fun liveViewProhibit(): Int? {
-        val data = collect(Ptp.OP_GET_DEVICE_PROP_VALUE, intArrayOf(0xD1A4))
-        if (data.size < 4) return null
-        return (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8) or
-            ((data[2].toInt() and 0xFF) shl 16) or ((data[3].toInt() and 0xFF) shl 24)
-    }
-
     /** AF-ON: asks the body to run autofocus (0x90C1, no params). */
     fun afDrive(): ByteArray = collect(Ptp.OP_NIKON_AF_DRIVE, intArrayOf())
 
@@ -446,21 +438,9 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     /** Reads one device property and returns its raw bytes (empty when absent). */
     fun readProp(code: Int): ByteArray = collect(Ptp.OP_GET_DEVICE_PROP_VALUE, intArrayOf(code))
 
-    /** Reads one device property and returns its first byte (0 when absent). */
-    fun readPropByte(code: Int): Int {
-        val data = collect(Ptp.OP_GET_DEVICE_PROP_VALUE, intArrayOf(code))
-        return if (data.isNotEmpty()) data[0].toInt() and 0xFF else -1
-    }
-
-
     /** Writes a device property with the PTP data-out phase (value in the END packet). */
     fun writeProp(code: Int, value: ByteArray) {
         transaction(Ptp.OP_SET_DEVICE_PROP_VALUE, intArrayOf(code), dataOut = value)
-    }
-
-    /** Clears every SDRAM image (0x90C3 with 0); frees the LV block. */
-    fun deleteAllSdram() {
-        runCatching { transaction(Ptp.OP_NIKON_DELETE_SDRAM_IMAGE, intArrayOf(0)) }
     }
 
     /** Z bodies' frame getter (0x9428); payload is display-info header + JPEG. */
@@ -473,12 +453,6 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
     fun changeApplicationMode(mode: Int) {
         transaction(Ptp.OP_NIKON_CHANGE_APPLICATION_MODE, intArrayOf(mode))
     }
-
-    /** Drop stale events queued before this session (0x9461). */
-    fun clearEvents() {
-        runCatching { transaction(Ptp.OP_NIKON_CLEAR_EVENT, IntArray(0)) }
-    }
-
 
     /**
      * Sends an operation and returns its PTP response code instead of throwing on
