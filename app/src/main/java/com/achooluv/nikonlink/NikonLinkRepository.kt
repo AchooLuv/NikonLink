@@ -299,6 +299,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
     val liveView: StateFlow<LiveViewState> = _liveView
 
     private var liveViewJob: Job? = null
+    private var paramJob: Job? = null
 
     /** A release holds the command channel; frames resume right after it. */
     @Volatile
@@ -316,20 +317,26 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val _remoteInfo = MutableStateFlow<RemoteInfo?>(null)
     val remoteInfo: StateFlow<RemoteInfo?> = _remoteInfo
 
-    private suspend fun refreshRemoteInfo() = withContext(Dispatchers.IO) {
-        fun u16(code: Int): Int? {
+    /**
+     * Reads the shooting parameters once and updates both the overlay strings and
+     * the control entries, so a periodic refresh costs five transactions total.
+     */
+    private suspend fun refreshRemoteInfo(quiet: Boolean = false) = withContext(Dispatchers.IO) {
+        fun scalar(code: Int, size: Int): Int? {
             val bytes = runCatching { client.readProp(code) }.getOrNull() ?: return null
-            if (bytes.size < 2) return null
-            return (bytes[0].toInt() and 0xFF) or ((bytes[1].toInt() and 0xFF) shl 8)
-        }
-        fun u32(code: Int): Long? {
-            val bytes = runCatching { client.readProp(code) }.getOrNull() ?: return null
-            if (bytes.size < 4) return null
-            var v = 0L
-            for (i in 3 downTo 0) v = (v shl 8) or (bytes[i].toLong() and 0xFF)
+            if (bytes.size < size) return null
+            var v = 0
+            for (i in size - 1 downTo 0) v = (v shl 8) or (bytes[i].toInt() and 0xFF)
             return v
         }
-        val mode = when (u16(0x500E)) {
+
+        val modeRaw = scalar(0x500E, 2)
+        val apertureRaw = scalar(0x5007, 2)
+        val isoRaw = scalar(0x500F, 2)
+        val shutterRaw = scalar(0x500D, 4)
+        val focalBytes = runCatching { client.readProp(0x5008) }.getOrNull()
+
+        val mode = when (modeRaw) {
             1 -> "M"
             2 -> "AUTO"
             3 -> "A"
@@ -337,12 +344,13 @@ class NikonLinkRepository private constructor(private val app: Application) {
             5 -> "P"
             else -> "—"
         }
-        val aperture = u16(0x5007)?.takeIf { it > 0 }?.let { "f/%.1f".format(it / 100.0) } ?: "—"
-        val iso = u16(0x500F)?.takeIf { it > 0 }?.toString() ?: "—"
-        val shutter = u32(0x500D)?.takeIf { it > 0 }?.let { us ->
-            if (us >= 1_000_000) "%.1fs".format(us / 1_000_000.0) else "1/${(1_000_000.0 / us).toInt()}"
+        val aperture = apertureRaw?.takeIf { it > 0 }?.let { "f/%.1f".format(it / 100.0) } ?: "—"
+        val iso = isoRaw?.takeIf { it > 0 }?.toString() ?: "—"
+        // 0x500D counts 0.1 ms units on these bodies (80 -> 8 ms -> 1/125).
+        val shutterUs = shutterRaw?.takeIf { it > 0 }?.toLong()?.times(100)
+        val shutter = shutterUs?.let {
+            if (it >= 1_000_000) "%.1fs".format(it / 1_000_000.0) else "1/${(1_000_000.0 / it).toInt()}"
         } ?: "—"
-        val focalBytes = runCatching { client.readProp(0x5008) }.getOrNull()
         val focal = when {
             focalBytes == null || focalBytes.isEmpty() -> "—"
             focalBytes.size >= 4 -> {
@@ -356,9 +364,29 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 if (v <= 0) "—" else "${v}mm"
             }
         }
+
         _remoteInfo.value = RemoteInfo(mode, aperture, iso, shutter, focal)
-        Diagnostics.log("参数 挡位=$mode 光圈=$aperture ISO=$iso 快门=$shutter 焦段=$focal")
+        // Keep control entries in sync without reading the same property twice.
+        _controls.value = _controls.value.map { control ->
+            when (control.key) {
+                "mode" -> modeRaw?.let { control.copy(current = it) } ?: control
+                "aperture" -> apertureRaw?.let { control.copy(current = it) } ?: control
+                "iso" -> isoRaw?.let { control.copy(current = it) } ?: control
+                "shutter" -> shutterUs?.let {
+                    val packed = if (it >= 1_000_000) {
+                        ((it / 1_000_000) shl 16).toInt() or 1
+                    } else {
+                        (1 shl 16) or Math.round(1_000_000.0 / it).toInt()
+                    }
+                    control.copy(current = packed)
+                } ?: control
+                else -> control
+            }
+        }
+        if (!quiet) Diagnostics.log("参数 挡位=$mode 光圈=$aperture ISO=$iso 快门=$shutter 焦段=$focal")
     }
+
+
 
     fun beginRemote() {
         if (_state.value !is ConnState.Connected) {
@@ -402,8 +430,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 val imageStatus = runCatching { client.readPropByte(Ptp.PROP_LIVE_VIEW_IMAGE_STATUS) }.getOrDefault(-1)
                 Diagnostics.log("LiveViewStatus 0xD1A2=$status / 0xD1B8=$cameraStatus / 0xD1BB=$imageStatus")
                 refreshRemoteInfo()
+                refreshControls()
                 _remote.value = RemoteState.Ready
                 startLiveViewPolling()
+                startParamRefresh()
             } catch (e: Exception) {
                 _remote.value = RemoteState.Failed
                 _liveView.value = LiveViewState.Failed
@@ -418,6 +448,8 @@ class NikonLinkRepository private constructor(private val app: Application) {
         if (_remote.value == RemoteState.Idle) return
         liveViewJob?.cancel()
         liveViewJob = null
+        paramJob?.cancel()
+        paramJob = null
         _preview.value = null
         _liveView.value = LiveViewState.Idle
         _remoteInfo.value = null
@@ -426,6 +458,242 @@ class NikonLinkRepository private constructor(private val app: Application) {
             runCatching { client.changeApplicationMode(0) }
             runCatching { client.returnToCamera() }
             _remote.value = RemoteState.Idle
+        }
+    }
+
+    /** One selectable value of a camera parameter. */
+    data class ParamOption(val raw: Int, val label: String)
+
+    /** A shooting parameter the remote page can read and (maybe) write. */
+    data class CameraControl(
+        val key: String,
+        val label: String,
+        val prop: Int,
+        val type: Int,
+        val current: Int,
+        val writable: Boolean,
+        val options: List<ParamOption>,
+    )
+
+    private val _controls = MutableStateFlow<List<CameraControl>>(emptyList())
+    val controls: StateFlow<List<CameraControl>> = _controls
+
+    private fun u16(b: ByteArray, o: Int): Int =
+        (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)
+
+    private fun u32v(b: ByteArray, o: Int): Long {
+        var v = 0L
+        for (i in 3 downTo 0) v = (v shl 8) or (b[o + i].toLong() and 0xFF)
+        return v
+    }
+
+    private fun typeSize(type: Int): Int = when (type) {
+        0x0002, 0x0003 -> 1
+        0x0004, 0x0005 -> 2
+        0x0006, 0x0007 -> 4
+        else -> -1
+    }
+
+    private fun readTyped(b: ByteArray, o: Int, type: Int): Int = when (typeSize(type)) {
+        1 -> b[o].toInt() and 0xFF
+        2 -> u16(b, o)
+        4 -> u32v(b, o).toInt()
+        else -> -1
+    }
+
+    private fun encodeTyped(value: Int, type: Int): ByteArray = when (typeSize(type)) {
+        1 -> byteArrayOf(value.toByte())
+        2 -> byteArrayOf(value.toByte(), (value ushr 8).toByte())
+        4 -> byteArrayOf(
+            value.toByte(), (value ushr 8).toByte(),
+            (value ushr 16).toByte(), (value ushr 24).toByte(),
+        )
+        else -> ByteArray(0)
+    }
+
+    private fun formatAperture(raw: Int): String = "f/%.1f".format(raw / 100.0)
+
+    private fun formatShutter(raw: Int): String {
+        val num = (raw ushr 16) and 0xFFFF
+        val den = raw and 0xFFFF
+        if (num == 0 || den == 0) return "—"
+        return if (den == 1) "${num}s" else "$num/$den"
+    }
+
+    private fun shutterOptions(): List<ParamOption> {
+        val out = ArrayList<ParamOption>()
+        for (den in intArrayOf(32000, 25000, 20000, 16000, 12500, 10000, 8000, 6400, 5000, 4000, 3200, 2500, 2000, 1600, 1250, 1000, 800, 640, 500, 400, 320, 250, 200, 160, 125, 100, 80, 60, 50, 40, 30, 25, 20, 15, 13, 10, 8, 6, 5, 4, 3)) {
+            out.add(ParamOption((1 shl 16) or den, "1/$den"))
+        }
+        for (sec in intArrayOf(1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30)) {
+            out.add(ParamOption((sec shl 16) or 1, "${sec}s"))
+        }
+        return out
+    }
+
+    private fun defaultsFor(key: String): List<ParamOption> = when (key) {
+        "aperture" -> listOf(
+            140, 160, 180, 200, 220, 250, 280, 320, 350, 400, 450, 500, 560, 630, 710,
+            800, 900, 1000, 1100, 1300, 1400, 1600, 1800, 2000, 2200, 2500, 2800, 3200,
+        ).map { ParamOption(it, formatAperture(it)) }
+        "iso" -> listOf(
+            100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600, 2000,
+            2500, 3200, 4000, 5000, 6400, 8000, 10000, 12800, 16000, 20000, 25600, 51200,
+        ).map { ParamOption(it, it.toString()) }
+        "shutter" -> shutterOptions()
+        "mode" -> listOf(
+            ParamOption(1, "M"), ParamOption(3, "A"), ParamOption(4, "S"),
+            ParamOption(5, "P"), ParamOption(2, "AUTO"),
+        )
+        else -> emptyList()
+    }
+
+    private fun labelFor(key: String, raw: Int): String = when (key) {
+        "aperture" -> formatAperture(raw)
+        "shutter" -> formatShutter(raw)
+        "mode" -> when (raw) {
+            1 -> "M"; 2 -> "AUTO"; 3 -> "A"; 4 -> "S"; 5 -> "P"; else -> raw.toString()
+        }
+        else -> raw.toString()
+    }
+
+    /** Reads descriptors for the parameters shown in the viewfinder overlay. */
+    private suspend fun refreshControls() = withContext(Dispatchers.IO) {
+        val defs = listOf(
+            Triple("mode", "挡位", 0x500E),
+            Triple("aperture", "光圈", 0x5007),
+            Triple("iso", "ISO", 0x500F),
+            Triple("shutter", "快门", 0xD100),
+        )
+        val out = ArrayList<CameraControl>()
+        for ((key, label, prop) in defs) {
+            val desc = runCatching { client.propDescriptor(prop) }.getOrNull()
+            var type = 0
+            var current = -1
+            var writable = false
+            val options = ArrayList<ParamOption>()
+            if (desc != null && desc.size >= 5) {
+                type = u16(desc, 2)
+                writable = desc[4].toInt() == 1
+                val sz = typeSize(type)
+                if (sz > 0 && desc.size >= 5 + sz) current = readTyped(desc, 5, type)
+                val formOff = 5 + 2 * sz
+                if (sz > 0 && desc.size > formOff) {
+                    when (desc[formOff].toInt()) {
+                        1 -> {
+                            val min = readTyped(desc, formOff + 1, type)
+                            val max = readTyped(desc, formOff + 1 + sz, type)
+                            val step = readTyped(desc, formOff + 1 + 2 * sz, type)
+                            if (step > 0 && max > min) {
+                                var v = min
+                                while (v <= max && options.size < 300) {
+                                    options.add(ParamOption(v, labelFor(key, v)))
+                                    v += step
+                                }
+                            }
+                        }
+                        2 -> {
+                            val count = u16(desc, formOff + 1)
+                            var off = formOff + 3
+                            for (i in 0 until count.coerceAtMost(300)) {
+                                if (off + sz > desc.size) break
+                                val v = readTyped(desc, off, type)
+                                options.add(ParamOption(v, labelFor(key, v)))
+                                off += sz
+                            }
+                        }
+                    }
+                }
+            }
+            // Shutter's descriptor is a packed fraction list, not a usable range.
+            if (key == "shutter" || options.isEmpty()) {
+                options.clear()
+                options.addAll(defaultsFor(key))
+                if (type == 0) type = 0x0006
+            }
+            // Z50II rejects 0xD100 writes with 0x201C; keep it display-only.
+            if (key == "shutter") writable = false
+            // Only keep the modes a Z body actually exposes.
+            if (key == "mode") {
+                options.removeAll { it.raw !in setOf(1, 2, 3, 4, 5) }
+            }
+            // The descriptor's "current" field is an index for some Nikon props;
+            // read the real value through GetDevicePropValue instead.
+            val szNow = typeSize(type)
+            // Shutter display comes from 0x500D; 0xD100 is only the write channel.
+            val valueProp = if (key == "shutter") 0x500D else prop
+            if (szNow > 0) {
+                val rawValue = runCatching { client.readProp(valueProp) }.getOrNull()
+                if (rawValue != null && rawValue.size >= szNow) {
+                    current = readTyped(rawValue, 0, type)
+                    // 0x500D is exposure time in microseconds; the OSD and 0xD100
+                    // both speak the packed num<<16|den fraction.
+                    if (key == "shutter" && current > 0) {
+                        val us = current * 100L
+                        current = if (us >= 1_000_000) {
+                            ((us / 1_000_000) shl 16).toInt() or 1
+                        } else {
+                            (1 shl 16) or Math.round(1_000_000.0 / us).toInt()
+                        }
+                    }
+                }
+            }
+            out.add(CameraControl(key, label, prop, type, current, writable, options))
+        }
+        _controls.value = out
+        Diagnostics.log("参数控制：" + out.joinToString(" ") {
+            "${it.label}=${it.current}${if (it.writable) "(可写)" else "(只读)"}/${it.options.size}项"
+        })
+    }
+
+    /** Writes one parameter and refreshes the overlay values. */
+    fun setControl(control: CameraControl, raw: Int) {
+        scope.launch {
+            // Hold off frame polling so the write and the read-back are not stuck
+            // behind multi-second live-view transactions on a weak link.
+            liveViewPaused = true
+            // Optimistic update so the overlay flips immediately; the reads below
+            // then reconcile with whatever the body actually accepted.
+            _controls.value = _controls.value.map {
+                if (it.key == control.key) it.copy(current = raw) else it
+            }
+            _remoteInfo.value = _remoteInfo.value?.let { info ->
+                when (control.key) {
+                    "mode" -> info.copy(mode = labelFor(control.key, raw))
+                    "aperture" -> info.copy(aperture = labelFor(control.key, raw))
+                    "iso" -> info.copy(iso = labelFor(control.key, raw))
+                    "shutter" -> info.copy(shutter = labelFor(control.key, raw))
+                    else -> info
+                }
+            }
+            try {
+                val payload = encodeTyped(raw, control.type)
+            val result = runCatching {
+                client.writeProp(control.prop, payload)
+            }
+                Diagnostics.log(
+                    "设置 ${control.label}=${labelFor(control.key, raw)} -> " +
+                        (result.exceptionOrNull()?.let { humanError(it) } ?: "OK"),
+                )
+                // Give the body a moment before reading back; otherwise the old
+                // value wins and the overlay flips back.
+                delay(450)
+                runCatching { refreshRemoteInfo(quiet = true) }
+            } finally {
+                liveViewPaused = false
+            }
+        }
+    }
+
+    /** Keeps the overlay in sync with dial changes made on the body. */
+    private fun startParamRefresh() {
+        paramJob?.cancel()
+        paramJob = scope.launch {
+            while (true) {
+                delay(2500)
+                if (liveViewPaused || captureInFlight) continue
+                runCatching { refreshRemoteInfo(quiet = true) }
+            }
         }
     }
 

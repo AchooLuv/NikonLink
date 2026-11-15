@@ -100,8 +100,6 @@ object Ptp {
     /** Nikon vendor op: ChangeApplicationMode (0x9435); Z bodies need mode 1 for remote writes. */
     const val OP_NIKON_CHANGE_APPLICATION_MODE = 0x9435
 
-    /** Nikon vendor op: GetEventEx (0x941C) — multi-parameter events on Z bodies. */
-    const val OP_NIKON_GET_EVENT_EX = 0x941C
 
     /** Nikon vendor op: ClearEvent (0x9461) — drop stale events after a reconnect. */
     const val OP_NIKON_CLEAR_EVENT = 0x9461

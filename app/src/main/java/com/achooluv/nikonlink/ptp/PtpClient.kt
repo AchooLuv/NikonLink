@@ -472,8 +472,6 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
         runCatching { transaction(Ptp.OP_NIKON_CLEAR_EVENT, IntArray(0)) }
     }
 
-    /** One GetEventEx batch (0x941C); raw payload. */
-    fun getEventExRaw(): ByteArray = collect(Ptp.OP_NIKON_GET_EVENT_EX, IntArray(0))
 
     /**
      * Sends an operation and returns its PTP response code instead of throwing on
