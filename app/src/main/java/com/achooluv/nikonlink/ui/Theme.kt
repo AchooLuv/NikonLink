@@ -8,8 +8,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 /** Nikon's signal yellow, used sparingly as the single accent. */
-val NikonYellow = Color(0xFFFFCD00)
-val NikonYellowDim = Color(0xFF6B5700)
+val NikonYellow = Color(0xFFFDE205)
+val NikonYellowDim = Color(0xFF6D6102)
 
 val Ink = Color(0xFF0B0B0C)
 val InkRaised = Color(0xFF141416)

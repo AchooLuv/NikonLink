@@ -410,7 +410,18 @@ private fun StepLine(number: String, text: String) {
                 .background(NikonYellow.copy(alpha = 0.16f), RoundedCornerShape(10.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(number, color = NikonYellow, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text(
+                number,
+                style = androidx.compose.ui.text.TextStyle(
+                    color = NikonYellow,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 10.sp,
+                    textAlign = TextAlign.Center,
+                    // Default font padding pushes the glyph down inside this small chip.
+                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                ),
+            )
         }
         Spacer(Modifier.size(10.dp))
         Text(text, color = Paper, fontSize = 12.5.sp)
