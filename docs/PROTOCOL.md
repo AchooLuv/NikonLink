@@ -8,7 +8,7 @@
 - **STA 发现**：枚举手机自己的 IPv4 网段，48 路并发探测 `15740` 端口，失败可手动指定 IP；AP 模式则用 `WifiNetworkSpecifier` 加入相机热点
 - **断点续传**：`.part` 文件 + `GetPartialObject(handle, offset, 4 MiB)`，恢复时按 `.part` 长度定位
 - **稳定性**：`TCP_NODELAY`、4 MiB 接收缓冲、15 s 心跳、事件线程监测断链、指数退避重连、前台服务保活
-- **UI**：Jetpack Compose + Material 3，尼康黄（`#FDE205`）单一强调色，深色底；R8 收缩后整包约 2.3 MB
+- **UI**：Jetpack Compose + Material 3，尼康黄（`#FDE804`）单一强调色，深色底；R8 收缩后整包约 2.3 MB
 
 ### 已验证的尼康厂商指令（Z50II，固件 C 1.11）
 

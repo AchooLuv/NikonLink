@@ -5,10 +5,10 @@
         <item name="android:statusBarColor">#0C0C0D</item>
         <item name="android:navigationBarColor">#0C0C0D</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowSplashScreenBackground">#FDE205</item>
+        <item name="android:windowSplashScreenBackground">#FDE804</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_foreground</item>
         <!-- Match the icon's own flat yellow so the Android 12 splash backdrop
              never shows as a lighter ring around the rounded icon. -->
-        <item name="android:windowSplashScreenIconBackgroundColor">#FDE205</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#FDE804</item>
     </style>
 </resources>
