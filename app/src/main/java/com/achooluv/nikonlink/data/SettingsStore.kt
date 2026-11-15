@@ -33,6 +33,16 @@ class SettingsStore(context: Context) {
     val pairJpeg = MutableStateFlow(prefs.getBoolean(KEY_PAIR_JPEG, true))
     val chunkSize = MutableStateFlow(prefs.getInt(KEY_CHUNK, DEFAULT_CHUNK))
     val keepAliveSeconds = MutableStateFlow(prefs.getInt(KEY_KEEPALIVE_SECONDS, 15))
+
+    /** Remote shutter self-timer in seconds (0 = immediate). */
+    val selfTimerSeconds = MutableStateFlow(prefs.getInt(KEY_SELF_TIMER, 0))
+
+    fun setSelfTimerSeconds(seconds: Int) {
+        val safe = seconds.coerceIn(0, 30)
+        selfTimerSeconds.value = safe
+        prefs.edit().putInt(KEY_SELF_TIMER, safe).apply()
+    }
+
     val mode = MutableStateFlow(ConnectMode.from(prefs.getString(KEY_MODE, null)))
 
     fun setMode(value: ConnectMode) {
@@ -179,6 +189,7 @@ class SettingsStore(context: Context) {
         private const val KEY_PAIR_JPEG = "pair_jpeg"
         private const val KEY_CHUNK = "chunk_size"
         private const val KEY_KEEPALIVE_SECONDS = "keepalive_seconds"
+    private const val KEY_SELF_TIMER = "self_timer_seconds"
         private const val KEY_SSID = "last_ssid"
         private const val KEY_PASS = "last_pass"
         private const val KEY_HOST = "last_host"

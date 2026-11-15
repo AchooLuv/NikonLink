@@ -202,6 +202,13 @@ class NikonLinkRepository private constructor(private val app: Application) {
         if (_captureState.value == CaptureState.Busy) return
         scope.launch {
             _captureState.value = CaptureState.Busy
+            val waitSeconds = settings.selfTimerSeconds.value
+            if (waitSeconds > 0) {
+                for (left in waitSeconds downTo 1) {
+                    _captureNote.value = "${left} 秒后拍摄…"
+                    delay(1000)
+                }
+            }
             _captureNote.value = "正在拍摄…"
             try {
                 captureInFlight = true
@@ -303,6 +310,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
         val aperture: String,
         val iso: String,
         val shutter: String,
+        val focal: String,
     )
 
     private val _remoteInfo = MutableStateFlow<RemoteInfo?>(null)
@@ -334,8 +342,22 @@ class NikonLinkRepository private constructor(private val app: Application) {
         val shutter = u32(0x500D)?.takeIf { it > 0 }?.let { us ->
             if (us >= 1_000_000) "%.1fs".format(us / 1_000_000.0) else "1/${(1_000_000.0 / us).toInt()}"
         } ?: "—"
-        _remoteInfo.value = RemoteInfo(mode, aperture, iso, shutter)
-        Diagnostics.log("参数 挡位=$mode 光圈=$aperture ISO=$iso 快门=$shutter")
+        val focalBytes = runCatching { client.readProp(0x5008) }.getOrNull()
+        val focal = when {
+            focalBytes == null || focalBytes.isEmpty() -> "—"
+            focalBytes.size >= 4 -> {
+                var v = 0L
+                for (i in 3 downTo 0) v = (v shl 8) or (focalBytes[i].toLong() and 0xFF)
+                if (v <= 0) "—" else if (v >= 1000) "%.0fmm".format(v / 100.0) else "${v}mm"
+            }
+            else -> {
+                val v = (focalBytes[0].toInt() and 0xFF) or
+                    (if (focalBytes.size > 1) (focalBytes[1].toInt() and 0xFF) shl 8 else 0)
+                if (v <= 0) "—" else "${v}mm"
+            }
+        }
+        _remoteInfo.value = RemoteInfo(mode, aperture, iso, shutter, focal)
+        Diagnostics.log("参数 挡位=$mode 光圈=$aperture ISO=$iso 快门=$shutter 焦段=$focal")
     }
 
     fun beginRemote() {
@@ -404,6 +426,32 @@ class NikonLinkRepository private constructor(private val app: Application) {
             runCatching { client.changeApplicationMode(0) }
             runCatching { client.returnToCamera() }
             _remote.value = RemoteState.Idle
+        }
+    }
+
+    /**
+     * Diagnostic: prints whether each shooting property advertises Get/Set.
+     * Triggered by long-pressing the model-support entry on the remote page.
+     */
+    fun probeWritableProps() {
+        scope.launch {
+            val props = listOf(
+                0x5007 to "光圈", 0x500D to "快门", 0x500F to "ISO", 0x5010 to "曝光补偿",
+                0x5005 to "白平衡", 0x500A to "对焦模式", 0x5013 to "驱动模式", 0x500E to "挡位",
+                0xD0B4 to "ISO(厂商)", 0xD100 to "快门(厂商)", 0xD1A6 to "取景选择器",
+                0xD05D to "AF 区域", 0xD061 to "AF 模式",
+            )
+            for ((code, label) in props) {
+                val data = runCatching { client.propDescriptor(code) }.getOrNull()
+                if (data == null || data.size < 5) {
+                    Diagnostics.log("属性 0x${code.toString(16)} $label -> 无描述")
+                    continue
+                }
+                val writable = data[4].toInt() == 1
+                val head = data.take(10).joinToString(" ") { "%02X".format(it.toInt() and 0xFF) }
+                Diagnostics.log("属性 0x${code.toString(16)} $label -> ${if (writable) "可写" else "只读"} 头=$head")
+            }
+            Diagnostics.log("属性探测完成")
         }
     }
 

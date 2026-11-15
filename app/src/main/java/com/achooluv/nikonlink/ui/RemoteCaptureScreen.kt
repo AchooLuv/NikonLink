@@ -2,10 +2,12 @@ package com.achooluv.nikonlink.ui
 
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +45,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -58,6 +61,7 @@ import kotlinx.coroutines.withContext
  * the shutter. Live view frames are not available yet, so the viewfinder shows the
  * last shot that was pulled back from the body.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     val identity by repo.identity.collectAsStateWithLifecycle()
@@ -67,6 +71,7 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
     val info by repo.remoteInfo.collectAsStateWithLifecycle()
     val previewBytes by repo.preview.collectAsStateWithLifecycle()
     val liveState by repo.liveView.collectAsStateWithLifecycle()
+    val selfTimer by repo.settings.selfTimerSeconds.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     var showModels by remember { mutableStateOf(false) }
 
@@ -129,7 +134,19 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                     fontSize = 12.sp,
                 )
             }
-            TextButton(onClick = { showModels = true }) {
+            val context = LocalContext.current
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .combinedClickable(
+                        onClick = { showModels = true },
+                        onLongClick = {
+                            repo.probeWritableProps()
+                            android.widget.Toast.makeText(context, "正在探测可写参数，结果见日志", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                    )
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            ) {
                 Text("机型支持", color = NikonLinkTheme.colors.dim, fontSize = 12.sp)
             }
         }
@@ -143,6 +160,7 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
             ParamCell("光圈", info?.aperture ?: "—")
             ParamCell("ISO", info?.iso ?: "—")
             ParamCell("快门", info?.shutter ?: "—")
+            ParamCell("焦段", info?.focal ?: "—")
         }
 
         Spacer(Modifier.height(14.dp))
@@ -198,6 +216,32 @@ fun RemoteCaptureScreen(repo: NikonLinkRepository, onClose: () -> Unit) {
                         fontSize = 11.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 24.dp),
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("延迟", color = NikonLinkTheme.colors.dim, fontSize = 11.sp)
+            listOf(0, 3, 5, 10).forEach { seconds ->
+                val selected = selfTimer == seconds
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (selected) NikonYellow else InkRaised)
+                        .clickable { repo.settings.setSelfTimerSeconds(seconds) }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        if (seconds == 0) "关闭" else "${seconds}s",
+                        color = if (selected) Color(0xFF161200) else PaperDim,
+                        fontSize = 11.sp,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                     )
                 }
             }

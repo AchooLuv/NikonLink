@@ -433,6 +433,9 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
             ((data[2].toInt() and 0xFF) shl 16) or ((data[3].toInt() and 0xFF) shl 24)
     }
 
+    /** DevicePropDesc (0x1014): code, type, GetSet flag, then value/default/form. */
+    fun propDescriptor(code: Int): ByteArray = collect(Ptp.OP_GET_DEVICE_PROP_DESC, intArrayOf(code))
+
     /** Reads one device property and returns its raw bytes (empty when absent). */
     fun readProp(code: Int): ByteArray = collect(Ptp.OP_GET_DEVICE_PROP_VALUE, intArrayOf(code))
 
