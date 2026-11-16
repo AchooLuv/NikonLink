@@ -125,6 +125,31 @@ private class ThumbStore(private val maxBytes: Long = 32L * 1024 * 1024) {
     }
 }
 
+private data class LibraryItem(
+    val key: String,
+    val files: List<CameraFile>,
+    val primary: CameraFile,
+    val badge: String,
+) {
+    val name: String get() = primary.name
+    val size: Long get() = files.sumOf { it.size }
+}
+
+private fun buildItems(source: List<CameraFile>): List<LibraryItem> =
+    source.groupBy { it.name.substringBeforeLast('.', it.name) }
+        .map { (key, group) ->
+            val jpg = group.firstOrNull { it.kind == FileKind.JPEG }
+            val raw = group.firstOrNull { it.kind == FileKind.RAW }
+            val movie = group.firstOrNull { it.kind == FileKind.MOVIE }
+            when {
+                movie != null -> LibraryItem(key, group, movie, "MOV")
+                jpg != null && raw != null -> LibraryItem(key, group, jpg, "RAW+JPG")
+                raw != null -> LibraryItem(key, group, raw, "RAW")
+                else -> LibraryItem(key, group, group.first(), "JPG")
+            }
+        }
+        .sortedByDescending { it.primary.handle }
+
 @Composable
 fun BrowseScreen(repo: NikonLinkRepository) {
     val state by repo.state.collectAsStateWithLifecycle()
@@ -139,28 +164,32 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var filter by remember { mutableStateOf(LibraryFilter.ALL) }
-    var selection by remember { mutableStateOf(setOf<Int>()) }
+    var selection by remember { mutableStateOf(setOf<String>()) }
     var pendingDelete by remember { mutableStateOf<List<CameraFile>?>(null) }
     val thumbs = remember { ThumbStore() }
 
     val connected = state is ConnState.Connected
-    val imported = remember(files, importsRev) {
-        files.filter { repo.isImported(it) }.map { it.handle }.toSet()
+    val importedKeys = remember(files, importsRev) {
+        buildItems(files)
+            .filter { item -> item.files.all { repo.isImported(it) } }
+            .map { it.key }
+            .toSet()
     }
-    val visible = remember(files, filter, queue, imported) {
-        val source = if (filter == LibraryFilter.MARKED) queue else files
-        source.filter { file ->
+    val visible = remember(files, filter, queue, importedKeys, importsRev) {
+        val source = if (filter == LibraryFilter.MARKED) buildItems(queue) else buildItems(files)
+        source.filter { item ->
             when (filter) {
                 LibraryFilter.ALL, LibraryFilter.MARKED -> true
-                LibraryFilter.NEW -> file.handle !in imported
-                LibraryFilter.PHOTO -> file.kind == FileKind.JPEG
-                LibraryFilter.VIDEO -> file.kind == FileKind.MOVIE
-                LibraryFilter.RAW -> file.kind == FileKind.RAW
+                LibraryFilter.NEW -> item.files.any { !repo.isImported(it) }
+                LibraryFilter.PHOTO -> item.files.any { it.kind == FileKind.JPEG }
+                LibraryFilter.VIDEO -> item.files.any { it.kind == FileKind.MOVIE }
+                LibraryFilter.RAW -> item.files.any { it.kind == FileKind.RAW }
             }
         }
     }
 
     LaunchedEffect(filter, connected) {
+        selection = emptySet()
         if (connected && filter == LibraryFilter.MARKED) repo.refreshTransferQueue()
     }
 
@@ -179,14 +208,14 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                         filter == LibraryFilter.MARKED ->
                             if (queueSupported) "相机上标记了 ${queue.size} 个 · 按相机 i 键可标记" else "这台相机不支持标记队列"
                         filter == LibraryFilter.NEW -> "${visible.size} 个未下载 · 可全选后一键下载"
-                        else -> "预览使用相机 JPEG 缩略图"
+                        else -> "${visible.size} 个文件 · 预览使用相机 JPEG 缩略图"
                     },
                     color = NikonLinkTheme.colors.dim,
                     fontSize = 12.sp,
                 )
             }
             if (connected && visible.isNotEmpty()) {
-                TextButton(onClick = { selection = visible.map { it.handle }.toSet() }) {
+                TextButton(onClick = { selection = visible.map { it.key }.toSet() }) {
                     Text("全选", color = PaperDim, fontSize = 12.sp)
                 }
             }
@@ -268,29 +297,29 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    items(visible, key = { it.handle }) { file ->
+                    items(visible, key = { it.key }) { item ->
                         ThumbCell(
-                            file = file,
+                            item = item,
                             store = thumbs,
-                            selected = file.handle in selection,
-                            imported = file.handle in imported,
+                            selected = item.key in selection,
+                            imported = item.key in importedKeys,
                             load = {
-                                repo.thumbnail(file.handle)
-                                    ?: if (file.kind == FileKind.MOVIE && repo.isImported(file)) {
-                                        repo.videoPoster(file.name)
+                                repo.thumbnail(item.primary.handle)
+                                    ?: if (item.primary.kind == FileKind.MOVIE && repo.isImported(item.primary)) {
+                                        repo.videoPoster(item.primary.name)
                                     } else null
                             },
                             enabled = !busy && !deleteState.active,
                             onClick = {
-                                selection = if (file.handle in selection) {
-                                    selection - file.handle
+                                selection = if (item.key in selection) {
+                                    selection - item.key
                                 } else {
-                                    selection + file.handle
+                                    selection + item.key
                                 }
                             },
-                            onPlay = if (repo.isImported(file) && !busy) {
+                            onPlay = if (item.key in importedKeys && !busy) {
                                 {
-                                    if (!repo.openMedia(file)) {
+                                    if (!repo.openMedia(item.primary)) {
                                         android.widget.Toast.makeText(
                                             context,
                                             "本机找不到这个文件，请重新下载",
@@ -334,16 +363,16 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                 SelectionBar(
                     modifier = Modifier.align(Alignment.BottomCenter),
                     count = selection.size,
-                    bytes = visible.filter { it.handle in selection }.sumOf { it.size },
+                    bytes = visible.filter { it.key in selection }.sumOf { it.size },
                     onClear = { selection = emptySet() },
                     enabled = !busy && !deleteState.active,
                     onDownload = {
-                        val chosen = visible.filter { it.handle in selection }
+                        val chosen = visible.filter { it.key in selection }.flatMap { it.files }
                         repo.download(chosen)
                         selection = emptySet()
                     },
                     onDelete = {
-                        val chosen = visible.filter { it.handle in selection }
+                        val chosen = visible.filter { it.key in selection }.flatMap { it.files }
                         pendingDelete = chosen
                     },
                 )
@@ -434,7 +463,7 @@ private fun SkeletonGrid() {
 
 @Composable
 private fun ThumbCell(
-    file: CameraFile,
+    item: LibraryItem,
     store: ThumbStore,
     selected: Boolean,
     imported: Boolean,
@@ -443,15 +472,15 @@ private fun ThumbCell(
     onClick: () -> Unit,
     onPlay: (() -> Unit)? = null,
 ) {
-    val bitmap = store.state(file.handle).value
+    val bitmap = store.state(item.primary.handle).value
 
     // Re-runs when the entry was never attempted (null + no record) or when it was
     // evicted from the bounded cache; failures are recorded so they do not loop.
-    LaunchedEffect(file.handle, bitmap == null) {
+    LaunchedEffect(item.primary.handle, bitmap == null) {
         if (bitmap == null) {
             val bytes = load()
             val decoded = bytes?.let { decodeThumbnail(it) }
-            if (decoded != null) store.put(file.handle, decoded) else store.markEmpty(file.handle)
+            if (decoded != null) store.put(item.primary.handle, decoded) else store.markEmpty(item.primary.handle)
         }
     }
 
@@ -470,14 +499,14 @@ private fun ThumbCell(
         if (bitmap != null) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
-                contentDescription = file.name,
+                contentDescription = item.name,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
         } else {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    file.extension.ifBlank { "IMG" },
+                    item.primary.extension.ifBlank { "IMG" },
                     color = PaperDim,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -489,13 +518,7 @@ private fun ThumbCell(
             Modifier.fillMaxWidth().padding(6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            val badge = when (file.kind) {
-                FileKind.RAW -> "RAW"
-                FileKind.MOVIE -> "MOV"
-                FileKind.JPEG -> "JPG"
-                FileKind.OTHER -> file.extension
-            }
-            Badge(badge, filled = selected)
+            Badge(item.badge, filled = selected)
             if (imported) {
                 Box(
                     Modifier
@@ -522,7 +545,7 @@ private fun ThumbCell(
                 .padding(start = 7.dp, end = 6.dp, top = 6.dp, bottom = 3.dp),
         ) {
             Text(
-                file.name,
+                item.name,
                 color = Paper,
                 fontSize = 9.sp,
                 lineHeight = 9.sp,
@@ -531,7 +554,7 @@ private fun ThumbCell(
             )
             Spacer(Modifier.height(3.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(formatBytes(file.size), color = PaperDim, fontSize = 8.5.sp, lineHeight = 8.5.sp)
+                Text(formatBytes(item.size), color = PaperDim, fontSize = 8.5.sp, lineHeight = 8.5.sp)
                 Spacer(Modifier.weight(1f))
                 if (onPlay != null) {
                     Box(
@@ -543,8 +566,8 @@ private fun ThumbCell(
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            if (file.kind == FileKind.MOVIE) Icons.Rounded.PlayArrow else Icons.Rounded.Visibility,
-                            contentDescription = if (file.kind == FileKind.MOVIE) "播放视频" else "查看图片",
+                            if (item.primary.kind == FileKind.MOVIE) Icons.Rounded.PlayArrow else Icons.Rounded.Visibility,
+                            contentDescription = if (item.primary.kind == FileKind.MOVIE) "播放视频" else "查看图片",
                             tint = NikonYellow,
                             modifier = Modifier.size(13.dp),
                         )
@@ -577,7 +600,7 @@ private fun SelectionBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text("已选 $count 个", color = Paper, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text("已选 $count 项", color = Paper, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 Text("共 ${formatBytes(bytes)}", color = PaperDim, fontSize = 11.sp)
             }
             TextButton(onClick = onClear, enabled = enabled) { Text("清空", color = PaperDim, fontSize = 12.sp) }

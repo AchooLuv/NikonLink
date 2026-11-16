@@ -83,9 +83,11 @@ fun Badge(text: String, filled: Boolean = false) {
     val colors = NikonLinkTheme.colors
     Box(
         Modifier
-            .size(width = 30.dp, height = 15.dp)
+            .height(15.dp)
+            .widthIn(min = 30.dp)
             .clip(RoundedCornerShape(5.dp))
-            .background(if (filled) colors.accent else Color(0xCC101012)),
+            .background(if (filled) colors.accent else Color(0xCC101012))
+            .padding(horizontal = 5.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(

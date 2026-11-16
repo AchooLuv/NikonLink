@@ -1446,19 +1446,18 @@ class NikonLinkRepository private constructor(private val app: Application) {
         return CameraDiscovery.find(Ptp.PORT, network, candidates, timeoutMs = 900)
     }
 
+    /** Debug helper: dumps every object handle/name/size so we can compare with the body. */
     // ---------------------------------------------------------------- library
 
+
+    private var fillJob: Job? = null
 
     fun refreshLibrary() {
         scope.launch {
             if (_state.value !is ConnState.Connected) return@launch
+            fillJob?.cancel()
             _libraryBusy.value = true
             try {
-                val vendorIds = runCatching { client.vendorStorageIds() }.getOrDefault(IntArray(0))
-                for (vid in vendorIds) {
-                    val count = runCatching { client.objectHandles(vid).size }.getOrDefault(-1)
-                    Diagnostics.log("厂商存储 0x${vid.toString(16)} 对象数=$count")
-                }
                 val ids = client.storageIds()
                 val handles = ArrayList<Int>()
                 for (id in ids) {
@@ -1482,6 +1481,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                     extrasLoaded = true
                     runCatching { loadExtras() }
                 }
+                if (_hasMore.value) startBackgroundFill()
             } catch (e: Exception) {
                 // Keep the old list; a failed refresh must not blank the grid.
                 Diagnostics.log("库刷新失败：${humanError(e)}")
@@ -1520,6 +1520,21 @@ class NikonLinkRepository private constructor(private val app: Application) {
             loaded += file
         }
         return loaded
+    }
+
+    /** Fills remaining pages slowly, yielding to transfers, so totals converge. */
+    private fun startBackgroundFill() {
+        fillJob?.cancel()
+        fillJob = scope.launch {
+            while (_hasMore.value && _state.value is ConnState.Connected) {
+                if (_progress.value.active || _delete.value.active) {
+                    delay(400)
+                    continue
+                }
+                runCatching { loadPage() }
+                delay(120)
+            }
+        }
     }
 
     private suspend fun loadPage() {
