@@ -1448,14 +1448,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
 
     // ---------------------------------------------------------------- library
 
-    private var fillJob: Job? = null
-    private val _libraryTotal = MutableStateFlow(0)
-    val libraryTotal: StateFlow<Int> = _libraryTotal
 
     fun refreshLibrary() {
         scope.launch {
             if (_state.value !is ConnState.Connected) return@launch
-            fillJob?.cancel()
             _libraryBusy.value = true
             try {
                 val vendorIds = runCatching { client.vendorStorageIds() }.getOrDefault(IntArray(0))
@@ -1480,7 +1476,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
                 val first = readSlice(0)
                 loadedPages = 1
                 _files.value = first
-                _libraryTotal.value = allHandles.size
                 _hasMore.value = allHandles.size > PAGE_SIZE
                 Diagnostics.log("库刷新：相机文件 ${allHandles.size} 个，首批 ${first.size} 个")
                 if (!extrasLoaded && first.isNotEmpty()) {
@@ -1510,18 +1505,6 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
-    /** Silently pulls the remaining pages so the list matches the card's file count. */
-    private fun startBackgroundFill() {
-        fillJob?.cancel()
-        fillJob = scope.launch {
-            while (_hasMore.value && _state.value is ConnState.Connected) {
-                runCatching { loadPage() }
-                delay(40)
-            }
-            val unique = _files.value.map { it.name }.distinct().size
-            Diagnostics.log("库补齐完成：已加载 ${_files.value.size} 个，文件名去重后 $unique 个")
-        }
-    }
 
     private suspend fun readSlice(start: Int): List<CameraFile> {
         if (start >= allHandles.size) return emptyList()

@@ -34,8 +34,6 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
@@ -138,7 +136,6 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val queueBusy by repo.queueBusy.collectAsStateWithLifecycle()
     val queueSupported by repo.queueSupported.collectAsStateWithLifecycle()
     val deleteState by repo.deleteState.collectAsStateWithLifecycle()
-    val libraryTotal by repo.libraryTotal.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var filter by remember { mutableStateOf(LibraryFilter.ALL) }
