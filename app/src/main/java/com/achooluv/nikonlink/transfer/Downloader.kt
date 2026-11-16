@@ -200,6 +200,7 @@ class Downloader(
                 lastUri = publish(file, part).toString()
                 part.delete()
                 settings.markImported(file.handle, file.size)
+                settings.flushImports()
                 doneCount++
                 Diagnostics.log("完成 ${file.name} → 相册")
                 emit()
@@ -226,8 +227,8 @@ class Downloader(
                 totalSize = totalSize,
                 lastUri = lastUri,
                 message = when {
-                    failedCount > 0 -> "完成 $doneCount 个，失败 $failedCount 个（已保留断点，可重试）"
-                    else -> "已下载 $doneCount 个文件"
+                    failedCount > 0 -> "传输队列已完成，$failedCount 个失败"
+                    else -> "传输队列已完成"
                 },
             ),
         )

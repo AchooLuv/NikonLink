@@ -205,6 +205,8 @@ fun SettingsScreen(repo: NikonLinkRepository) {
                 onClearPairingNote = { repo.clearPairingNote() },
                 onClearRecords = { confirmClear = true },
                 onResetAll = { confirmReset = true },
+                deleteLocalCopies = settings.deleteLocalCopies.collectAsStateWithLifecycle().value,
+                onDeleteLocalCopies = { settings.setDeleteLocalCopies(it) },
                 onCopyDiagnostics = {
                     clipboard.setText(AnnotatedString(Diagnostics.dump(context)))
                     toast(context, "诊断信息已复制")
@@ -371,6 +373,8 @@ private fun SettingsDetail(
     onClearPairingNote: () -> Unit,
     onClearRecords: () -> Unit,
     onResetAll: () -> Unit,
+    deleteLocalCopies: Boolean,
+    onDeleteLocalCopies: (Boolean) -> Unit,
     onCopyDiagnostics: () -> Unit,
     onClearLogs: () -> Unit,
 ) {
@@ -415,6 +419,8 @@ private fun SettingsDetail(
                     onClearPairingNote = onClearPairingNote,
                 )
                 SettingsPage.STORAGE -> StoragePanel(
+                    deleteLocalCopies = deleteLocalCopies,
+                    onDeleteLocalCopies = onDeleteLocalCopies,
                     onClearRecords = onClearRecords,
                     onResetAll = onResetAll,
                 )
@@ -627,11 +633,31 @@ private fun PairingSection(
 }
 
 @Composable
-private fun StoragePanel(onClearRecords: () -> Unit, onResetAll: () -> Unit) {
+private fun StoragePanel(
+    deleteLocalCopies: Boolean,
+    onDeleteLocalCopies: (Boolean) -> Unit,
+    onClearRecords: () -> Unit,
+    onResetAll: () -> Unit,
+) {
     NikonCard {
         Text("保存位置", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(4.dp))
         Text("Pictures/NikonLink · Movies/NikonLink", color = PaperDim, fontSize = 11.sp)
+        HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("同步删除已下载文件", color = Paper, fontSize = 13.sp)
+                Text("删除相机文件时一并清理手机上的副本", color = PaperDim, fontSize = 11.sp)
+            }
+            Switch(
+                checked = deleteLocalCopies,
+                onCheckedChange = onDeleteLocalCopies,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF161200),
+                    checkedTrackColor = NikonYellow,
+                ),
+            )
+        }
         HorizontalDivider(color = NikonLinkTheme.colors.line, modifier = Modifier.padding(vertical = 16.dp))
         ActionRow("清除下载记录", "只忘记哪些文件已下载，不删除相册里的文件", onClearRecords)
         Spacer(Modifier.height(14.dp))

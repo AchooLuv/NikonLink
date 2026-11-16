@@ -367,6 +367,11 @@ class PtpIpClient(private val friendlyName: String) : Closeable {
 
     fun thumbnail(handle: Int): ByteArray = collect(Ptp.OP_GET_THUMB, intArrayOf(handle))
 
+    /** Deletes a card object permanently (0x100B DeleteObject). */
+    fun deleteObject(handle: Int) {
+        collect(Ptp.OP_DELETE_OBJECT, intArrayOf(handle))
+    }
+
     /** Nikon 640px preview; bodies that reject the vendor op throw a [PtpException]. */
     fun largeThumbnail(handle: Int): ByteArray = collect(Ptp.OP_NIKON_GET_LARGE_THUMB, intArrayOf(handle))
 

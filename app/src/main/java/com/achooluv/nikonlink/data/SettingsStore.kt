@@ -247,6 +247,14 @@ class SettingsStore(context: Context) {
     fun setShowInterval(value: Boolean) { showInterval.value = value; prefs.edit().putBoolean(KEY_SHOW_INTERVAL, value).apply() }
     fun setShowTimer(value: Boolean) { showTimer.value = value; prefs.edit().putBoolean(KEY_SHOW_TIMER, value).apply() }
 
+    /** Also remove the phone copy when deleting files from the camera. */
+    val deleteLocalCopies = MutableStateFlow(prefs.getBoolean(KEY_DELETE_LOCAL, false))
+
+    fun setDeleteLocalCopies(enabled: Boolean) {
+        deleteLocalCopies.value = enabled
+        prefs.edit().putBoolean(KEY_DELETE_LOCAL, enabled).apply()
+    }
+
     fun setGridLines(enabled: Boolean) {
         gridLines.value = enabled
         prefs.edit().putBoolean(KEY_GRID, enabled).apply()
@@ -260,6 +268,7 @@ companion object {
         private const val KEY_CHUNK = "chunk_size"
         private const val KEY_KEEPALIVE_SECONDS = "keepalive_seconds"
     private const val KEY_SELF_TIMER = "self_timer_seconds"
+    private const val KEY_DELETE_LOCAL = "delete_local_copies"
     private const val KEY_LV_QUALITY = "lv_quality"
     private const val KEY_TOOLS_V2 = "tools_defaults_v2"
     private const val KEY_TOOLS_V3 = "tools_defaults_v3"

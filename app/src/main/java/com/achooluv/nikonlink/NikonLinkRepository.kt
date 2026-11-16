@@ -66,6 +66,8 @@ internal fun reconnectDelaySeconds(attempt: Int): Int {
  * Lives for the whole process so the PTP/IP session survives configuration
  * changes and activity restarts.
  */
+private const val PAGE_SIZE = 24
+
 class NikonLinkRepository private constructor(private val app: Application) {
 
     val settings = SettingsStore(app)
@@ -1446,27 +1448,53 @@ class NikonLinkRepository private constructor(private val app: Application) {
 
     // ---------------------------------------------------------------- library
 
+    private var fillJob: Job? = null
+    private val _libraryTotal = MutableStateFlow(0)
+    val libraryTotal: StateFlow<Int> = _libraryTotal
+
     fun refreshLibrary() {
         scope.launch {
             if (_state.value !is ConnState.Connected) return@launch
+            fillJob?.cancel()
             _libraryBusy.value = true
             try {
+                val vendorIds = runCatching { client.vendorStorageIds() }.getOrDefault(IntArray(0))
+                for (vid in vendorIds) {
+                    val count = runCatching { client.objectHandles(vid).size }.getOrDefault(-1)
+                    Diagnostics.log("厂商存储 0x${vid.toString(16)} 对象数=$count")
+                }
                 val ids = client.storageIds()
                 val handles = ArrayList<Int>()
                 for (id in ids) {
+                    val info = runCatching { client.storageInfo(id) }.getOrNull()
+                    Diagnostics.log("存储 0x${id.toString(16)} 描述=${info?.description ?: "?"}")
+                    // SDRAM is the body's internal buffer (remote shots), not the card.
+                    if (info?.description?.contains("SDRAM", ignoreCase = true) == true) continue
                     runCatching { client.objectHandles(id) }.onSuccess { handles += it.toList() }
                 }
                 allHandles = handles.distinct().sortedDescending()
                 loadedPages = 0
-                _files.value = emptyList()
                 kindByHandle.clear()
                 reconcileBaseline()
-                loadPage()
+                // Build the first page before swapping, so the grid never goes blank.
+                val first = readSlice(0)
+                loadedPages = 1
+                _files.value = first
+                _libraryTotal.value = allHandles.size
+                _hasMore.value = allHandles.size > PAGE_SIZE
+                Diagnostics.log("库刷新：相机文件 ${allHandles.size} 个，首批 ${first.size} 个")
+                if (!extrasLoaded && first.isNotEmpty()) {
+                    extrasLoaded = true
+                    runCatching { loadExtras() }
+                }
             } catch (e: Exception) {
-                // Keep the old list; surface nothing louder than a retry affordance.
+                // Keep the old list; a failed refresh must not blank the grid.
+                Diagnostics.log("库刷新失败：${humanError(e)}")
             } finally {
                 _libraryBusy.value = false
             }
+            // Pages load on demand: filling hundreds of objectInfo calls blocks the
+            // single PTP channel and makes downloads/deletes feel frozen.
         }
     }
 
@@ -1482,16 +1510,25 @@ class NikonLinkRepository private constructor(private val app: Application) {
         }
     }
 
-    private suspend fun loadPage() {
-        val pageSize = 120
-        val start = loadedPages * pageSize
-        if (start >= allHandles.size) {
-            _hasMore.value = false
-            return
+    /** Silently pulls the remaining pages so the list matches the card's file count. */
+    private fun startBackgroundFill() {
+        fillJob?.cancel()
+        fillJob = scope.launch {
+            while (_hasMore.value && _state.value is ConnState.Connected) {
+                runCatching { loadPage() }
+                delay(40)
+            }
+            val unique = _files.value.map { it.name }.distinct().size
+            Diagnostics.log("库补齐完成：已加载 ${_files.value.size} 个，文件名去重后 $unique 个")
         }
-        val slice = allHandles.subList(start, minOf(start + pageSize, allHandles.size))
+    }
+
+    private suspend fun readSlice(start: Int): List<CameraFile> {
+        if (start >= allHandles.size) return emptyList()
+        val slice = allHandles.subList(start, minOf(start + PAGE_SIZE, allHandles.size))
         val loaded = ArrayList<CameraFile>(slice.size)
         for (handle in slice) {
+            if (_progress.value.active || _delete.value.active) break
             val info = runCatching { client.objectInfo(handle) }.getOrNull() ?: continue
             if (info.isFolder) continue
             val file = CameraFile.from(info, handle)
@@ -1499,14 +1536,19 @@ class NikonLinkRepository private constructor(private val app: Application) {
             kindByHandle[file.handle] = file.kind
             loaded += file
         }
+        return loaded
+    }
+
+    private suspend fun loadPage() {
+        val start = loadedPages * PAGE_SIZE
+        val loaded = readSlice(start)
+        if (start >= allHandles.size) {
+            _hasMore.value = false
+            return
+        }
         loadedPages++
         _files.value = _files.value + loaded
-        _hasMore.value = loadedPages * pageSize < allHandles.size
-
-        if (!extrasLoaded && loaded.isNotEmpty()) {
-            extrasLoaded = true
-            runCatching { loadExtras() }
-        }
+        _hasMore.value = loadedPages * PAGE_SIZE < allHandles.size
     }
 
     /**
@@ -1752,6 +1794,101 @@ class NikonLinkRepository private constructor(private val app: Application) {
         val failed = _failedFiles.value
         if (failed.isNotEmpty()) download(failed)
     }
+
+    private fun deleteLocalCopy(name: String) {
+        runCatching {
+            app.contentResolver.delete(
+                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                "${android.provider.MediaStore.Images.Media.DISPLAY_NAME}=?",
+                arrayOf(name),
+            )
+        }
+        runCatching {
+            app.contentResolver.delete(
+                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                "${android.provider.MediaStore.Video.Media.DISPLAY_NAME}=?",
+                arrayOf(name),
+            )
+        }
+    }
+
+    // ------------------------------------------------------ camera deletion
+
+    data class DeleteState(
+        val active: Boolean = false,
+        val done: Int = 0,
+        val total: Int = 0,
+        val failed: Int = 0,
+        val currentName: String = "",
+        val message: String? = null,
+    )
+
+    private val _delete = MutableStateFlow(DeleteState())
+    val deleteState: StateFlow<DeleteState> = _delete
+
+    fun clearDeleteState() {
+        _delete.value = DeleteState()
+    }
+
+    /** Deletes the selected files from the card; phone copies only when asked. */
+    fun deleteFromCamera(files: List<CameraFile>, deleteLocalCopies: Boolean) {
+        if (files.isEmpty()) return
+        if (queueWorker?.isActive == true || _progress.value.active) {
+            _delete.value = DeleteState(message = "有传输正在进行，等结束再删除")
+            return
+        }
+        scope.launch {
+            downloadMutex.withLock {
+                _delete.value = DeleteState(active = true, total = files.size)
+                var done = 0
+                var failed = 0
+                for (file in files) {
+                    val result = runCatching { client.deleteObject(file.handle) }
+                    val ok = result.isSuccess
+                    Diagnostics.log(
+                        "删除相机文件 ${file.name} -> " +
+                            (result.exceptionOrNull()?.let { humanError(it) } ?: "OK"),
+                    )
+                    if (ok) {
+                        done++
+                        if (deleteLocalCopies && isImported(file)) deleteLocalCopy(file.name)
+                    } else {
+                        failed++
+                    }
+                    _delete.value = _delete.value.copy(
+                        active = true, done = done, total = files.size, failed = failed,
+                        currentName = file.name,
+                    )
+                }
+                // Verify against the card so a silently-ignored delete is reported honestly.
+                val remaining = runCatching {
+                    val ids = client.storageIds()
+                    ids.flatMap { id -> client.objectHandles(id).toList() }.toSet()
+                }.getOrNull()
+                val stillThere = remaining?.let { left -> files.count { it.handle in left } } ?: 0
+                val deletedHandles = files.filter { f -> remaining == null || f.handle !in remaining }.map { it.handle }.toSet()
+                if (deletedHandles.isNotEmpty()) {
+                    // Drop them locally: a full library refresh costs a page of objectInfo calls.
+                    _files.value = _files.value.filterNot { it.handle in deletedHandles }
+                    allHandles = allHandles.filterNot { it in deletedHandles }
+                    deletedHandles.forEach { kindByHandle.remove(it) }
+                }
+                if (_queueSupported.value) runCatching { refreshTransferQueue() }
+                runCatching { refreshIdentityStorage() }
+                _importsVersion.value++
+                Diagnostics.log("删除结束：成功 $done，失败 $failed，相机仍保留 $stillThere")
+                _delete.value = DeleteState(
+                    active = false, done = done, total = files.size, failed = failed,
+                    message = when {
+                        stillThere > 0 -> "删除队列未完成，$stillThere 个仍在相机上"
+                        failed > 0 -> "删除队列已完成，$failed 个失败"
+                        else -> "删除队列已完成"
+                    },
+                )
+            }
+        }
+    }
+
 
     /** Clears the "last batch" summary bar. */
     fun clearTransferResult() {

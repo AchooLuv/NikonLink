@@ -33,6 +33,11 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -57,6 +62,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -131,10 +137,13 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val queue by repo.transferQueue.collectAsStateWithLifecycle()
     val queueBusy by repo.queueBusy.collectAsStateWithLifecycle()
     val queueSupported by repo.queueSupported.collectAsStateWithLifecycle()
+    val deleteState by repo.deleteState.collectAsStateWithLifecycle()
+    val libraryTotal by repo.libraryTotal.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var filter by remember { mutableStateOf(LibraryFilter.ALL) }
     var selection by remember { mutableStateOf(setOf<Int>()) }
+    var pendingDelete by remember { mutableStateOf<List<CameraFile>?>(null) }
     val thumbs = remember { ThumbStore() }
 
     val connected = state is ConnState.Connected
@@ -173,7 +182,7 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                         filter == LibraryFilter.MARKED ->
                             if (queueSupported) "相机上标记了 ${queue.size} 个 · 按相机 i 键可标记" else "这台相机不支持标记队列"
                         filter == LibraryFilter.NEW -> "${visible.size} 个未下载 · 可全选后一键下载"
-                        else -> "${files.size} 个文件 · 预览使用相机 JPEG 缩略图"
+                        else -> "预览使用相机 JPEG 缩略图"
                     },
                     color = NikonLinkTheme.colors.dim,
                     fontSize = 12.sp,
@@ -190,11 +199,19 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                 },
                 enabled = connected && !busy && !queueBusy,
             ) {
-                Icon(
-                    Icons.Rounded.Refresh,
-                    contentDescription = "刷新",
-                    tint = if (connected) Paper else PaperDim,
-                )
+                if (busy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = NikonYellow,
+                    )
+                } else {
+                    Icon(
+                        Icons.Rounded.Refresh,
+                        contentDescription = "刷新",
+                        tint = if (connected) Paper else PaperDim,
+                    )
+                }
             }
         }
 
@@ -228,13 +245,11 @@ fun BrowseScreen(repo: NikonLinkRepository) {
             }
         }
 
-        // Collected in its own leaf so chunk-level progress updates never recompose
-        // the grid (that was the main source of scroll jank).
-        TransferStatusArea(repo)
-
         Box(Modifier.weight(1f)) {
             if (!connected) {
                 EmptyState("先连接相机", "连接成功后，这里会显示存储卡里的照片、视频与 RAW。")
+            } else if (visible.isEmpty() && busy) {
+                SkeletonGrid()
             } else if (visible.isEmpty() && !busy) {
                 if (filter == LibraryFilter.MARKED) {
                     EmptyState(
@@ -268,6 +283,7 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                                         repo.videoPoster(file.name)
                                     } else null
                             },
+                            enabled = !busy && !deleteState.active,
                             onClick = {
                                 selection = if (file.handle in selection) {
                                     selection - file.handle
@@ -275,7 +291,7 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                                     selection + file.handle
                                 }
                             },
-                            onPlay = if (repo.isImported(file)) {
+                            onPlay = if (repo.isImported(file) && !busy) {
                                 {
                                     if (!repo.openMedia(file)) {
                                         android.widget.Toast.makeText(
@@ -306,17 +322,113 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                 }
             }
 
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .zIndex(2f)
+                    .padding(bottom = if (selection.isNotEmpty()) 92.dp else 8.dp),
+            ) {
+                TransferStatusArea(repo)
+                DeleteStatusArea(deleteState) { repo.clearDeleteState() }
+            }
+
             if (selection.isNotEmpty()) {
                 SelectionBar(
                     modifier = Modifier.align(Alignment.BottomCenter),
                     count = selection.size,
                     bytes = visible.filter { it.handle in selection }.sumOf { it.size },
                     onClear = { selection = emptySet() },
+                    enabled = !busy && !deleteState.active,
                     onDownload = {
                         val chosen = visible.filter { it.handle in selection }
                         repo.download(chosen)
                         selection = emptySet()
                     },
+                    onDelete = {
+                        val chosen = visible.filter { it.handle in selection }
+                        pendingDelete = chosen
+                    },
+                )
+            }
+
+
+            pendingDelete?.let { files ->
+                AlertDialog(
+                    onDismissRequest = { pendingDelete = null },
+                    containerColor = InkRaised,
+                    title = {
+                        Text(
+                            "从相机删除 ${files.size} 个文件？",
+                            color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                        )
+                    },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            files.take(8).chunked(2).forEach { pair ->
+                                Row(Modifier.fillMaxWidth()) {
+                                    pair.forEach { file ->
+                                        Text(
+                                            file.name,
+                                            color = PaperDim, fontSize = 12.sp,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
+                                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                }
+                            }
+                            if (files.size > 8) {
+                                Text("等 ${files.size} 个文件", color = PaperDim, fontSize = 11.sp)
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            repo.deleteFromCamera(files, repo.settings.deleteLocalCopies.value)
+                            selection = emptySet()
+                            pendingDelete = null
+                        }) {
+                            Text("删除", color = Ember, fontWeight = FontWeight.Bold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingDelete = null }) {
+                            Text("取消", color = PaperDim)
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkeletonGrid() {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 130.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        userScrollEnabled = false,
+    ) {
+        items(9) {
+            Column {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(InkCard),
+                )
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.6f)
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(InkCard),
                 )
             }
         }
@@ -330,6 +442,7 @@ private fun ThumbCell(
     selected: Boolean,
     imported: Boolean,
     load: suspend () -> ByteArray?,
+    enabled: Boolean = true,
     onClick: () -> Unit,
     onPlay: (() -> Unit)? = null,
 ) {
@@ -355,7 +468,7 @@ private fun ThumbCell(
                 color = if (selected) NikonYellow else NikonLinkTheme.colors.line,
                 shape = RoundedCornerShape(12.dp),
             )
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
     ) {
         if (bitmap != null) {
             Image(
@@ -452,6 +565,8 @@ private fun SelectionBar(
     bytes: Long,
     onClear: () -> Unit,
     onDownload: () -> Unit,
+    onDelete: () -> Unit,
+    enabled: Boolean = true,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
@@ -468,9 +583,15 @@ private fun SelectionBar(
                 Text("已选 $count 个", color = Paper, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 Text("共 ${formatBytes(bytes)}", color = PaperDim, fontSize = 11.sp)
             }
-            TextButton(onClick = onClear) { Text("清空", color = PaperDim, fontSize = 12.sp) }
+            TextButton(onClick = onClear, enabled = enabled) { Text("清空", color = PaperDim, fontSize = 12.sp) }
+            TextButton(onClick = onDelete, enabled = enabled) {
+                Icon(Icons.Rounded.Delete, null, modifier = Modifier.size(16.dp), tint = Ember)
+                Spacer(Modifier.size(4.dp))
+                Text("删除", color = Ember, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
             Button(
                 onClick = onDownload,
+                enabled = enabled,
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = NikonYellow,
@@ -481,6 +602,49 @@ private fun SelectionBar(
                 Spacer(Modifier.size(6.dp))
                 Text("下载", fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
+        }
+    }
+}
+
+@Composable
+private fun DeleteStatusArea(
+    state: NikonLinkRepository.DeleteState,
+    onClose: () -> Unit,
+) {
+    if (!state.active && state.message == null) return
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .background(InkCard, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (state.active) "正在删除" else "删除完成",
+                color = Paper, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                if (state.total > 0) "${state.done}/${state.total}" else "",
+                color = PaperDim, fontSize = 11.sp,
+            )
+            if (!state.active) {
+                TextButton(onClick = onClose) { Text("关闭", color = PaperDim, fontSize = 12.sp) }
+            }
+        }
+        if (state.active && state.currentName.isNotBlank()) {
+            Text(state.currentName, color = PaperDim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.height(6.dp))
+        if (state.active) {
+            ThinProgress(if (state.total > 0) state.done.toFloat() / state.total else 0f)
+        } else {
+            Text(
+                state.message.orEmpty(),
+                color = if (state.failed > 0) Ember else Mint,
+                fontSize = 12.sp,
+            )
         }
     }
 }
@@ -504,6 +668,8 @@ private fun TransferStatusArea(repo: NikonLinkRepository) {
     } else if (progress.message != null && (progress.doneCount > 0 || failed.isNotEmpty())) {
         TransferResultBar(
             message = progress.message ?: "",
+            done = progress.doneCount,
+            total = progress.doneCount + progress.failedCount,
             failed = failed.size,
             galleryUri = lastUri,
             onRetry = { repo.retryFailed() },
@@ -525,45 +691,41 @@ private fun DownloadBanner(
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
             .background(InkCard, RoundedCornerShape(16.dp))
-            .padding(start = 14.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(
-                        name,
-                        color = Paper,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text("$index / $count", color = PaperDim, fontSize = 11.sp)
-                }
-                Spacer(Modifier.height(8.dp))
-                ThinProgress(fraction)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    buildString {
-                        append("${(fraction * 100).toInt()}% · ${formatSpeed(speed)}")
-                        if (eta.isNotBlank()) append(" · 剩余 $eta")
-                    },
-                    color = NikonLinkTheme.colors.dim,
-                    fontSize = 10.5.sp,
-                )
-            }
-            IconButton(onClick = onCancel) {
-                Icon(Icons.Rounded.Close, contentDescription = "取消", tint = PaperDim, modifier = Modifier.size(18.dp))
-            }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "正在下载",
+                color = Paper, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+            Text("$index / $count", color = PaperDim, fontSize = 11.sp)
+            TextButton(onClick = onCancel) { Text("取消", color = PaperDim, fontSize = 12.sp) }
         }
+        if (name.isNotBlank()) {
+            Text(name, color = PaperDim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.height(6.dp))
+        ThinProgress(fraction)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            buildString {
+                append("${(fraction * 100).toInt()}% · ${formatSpeed(speed)}")
+                if (eta.isNotBlank()) append(" · 剩余 $eta")
+            },
+            color = NikonLinkTheme.colors.dim,
+            fontSize = 10.5.sp,
+        )
     }
 }
 
 @Composable
 private fun TransferResultBar(
     message: String,
+    done: Int,
+    total: Int,
     failed: Int,
     galleryUri: String?,
     onRetry: () -> Unit,
@@ -573,13 +735,26 @@ private fun TransferResultBar(
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
             .background(InkCard, RoundedCornerShape(16.dp))
-            .padding(14.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Text(message, color = Paper, fontSize = 12.sp, lineHeight = 17.sp)
-        Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "下载完成",
+                color = Paper, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+            if (total > 0) Text("$done/$total", color = PaperDim, fontSize = 11.sp)
+            TextButton(onClick = onDismiss) { Text("关闭", color = PaperDim, fontSize = 12.sp) }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                message,
+                color = if (failed > 0) Ember else Mint,
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f, fill = false),
+            )
             if (galleryUri != null) {
                 TextButton(
                     onClick = {
@@ -598,11 +773,9 @@ private fun TransferResultBar(
             }
             if (failed > 0) {
                 TextButton(onClick = onRetry) {
-                    Text("重试失败项 ($failed)", color = Mint, fontSize = 12.sp)
+                    Text("重试失败项", color = Mint, fontSize = 12.sp)
                 }
             }
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onDismiss) { Text("关闭", color = PaperDim, fontSize = 12.sp) }
         }
     }
 }

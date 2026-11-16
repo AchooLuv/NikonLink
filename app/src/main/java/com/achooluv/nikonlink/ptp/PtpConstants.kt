@@ -36,6 +36,7 @@ object Ptp {
     const val OP_GET_OBJECT_INFO = 0x1008
     const val OP_GET_OBJECT = 0x1009
     const val OP_GET_THUMB = 0x100A
+    const val OP_DELETE_OBJECT = 0x100B
     const val OP_GET_DEVICE_PROP_DESC = 0x1014
     const val OP_GET_DEVICE_PROP_VALUE = 0x1015
     const val OP_SET_DEVICE_PROP_VALUE = 0x1016
