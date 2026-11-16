@@ -4,7 +4,9 @@
 
 **尼康图传 NikonLink · 简单易用 · 稳定连接 · 极速传图 · 全功能遥控**
 
-把尼康 Z 系列相机的照片 / RAW / 视频无线传到安卓手机，也能在手机上实时取景、点屏对焦、按快门、间隔拍摄。不用电脑、不用尼康官方 App、不用数据线。支持相机热点（AP）与同一 Wi-Fi（STA），适用于 Z50II、Z8、Z9、Z6III、Z5II、Zf、Z30 等机型，也是 SnapBridge 的替代方案。
+尼康 Z 系列相机的无线图传：手机浏览、下载照片 / RAW / 视频，实时取景、点屏对焦、遥控快门、间隔拍摄。支持相机热点（AP）与同一 Wi-Fi（STA），适用于 Z50II、Z8、Z9、Z6III、Z5II、Zf、Z30 等机型，也是 SnapBridge 的替代方案。
+
+*Nikon Z wireless tethering & photo transfer for Android (Kotlin, PTP/IP).*
 
 *Nikon Z wireless tethering & photo transfer for Android (Kotlin, PTP/IP).*
 
