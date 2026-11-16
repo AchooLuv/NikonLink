@@ -7,11 +7,6 @@
 尼康 Z 系列相机的无线图传：手机浏览、下载照片 / RAW / 视频，实时取景、点屏对焦、遥控快门、间隔拍摄。支持相机热点（AP）与同一 Wi-Fi（STA），适用于 Z50II、Z8、Z9、Z6III、Z5II、Zf、Z30 等机型，也是 SnapBridge 的替代方案。
 
 *Nikon Z wireless tethering & photo transfer for Android (Kotlin, PTP/IP).*
-
-*Nikon Z wireless tethering & photo transfer for Android (Kotlin, PTP/IP).*
-
-*Nikon Z wireless tethering & photo transfer for Android (Kotlin, PTP/IP).*
-
 <p align="center">
   <a href="https://github.com/AchooLuv/NikonLink/releases/latest"><img src="https://img.shields.io/github/v/release/AchooLuv/NikonLink?label=APK&color=FDE804" alt="尼康图传 NikonLink APK 下载"></a>
   <a href="#下载与安装"><img src="https://img.shields.io/badge/Android-10%2B%20%C2%B7%20arm64-3DDC84" alt="Android 10+ arm64"></a>
@@ -114,4 +109,6 @@
 
 ## 关键词
 
-尼康图传 · 尼康无线图传 App · Nikon 相机传照片到手机 · Z50II 图传 · 尼康相机 Wi-Fi 传图 · 尼康 STA 模式 · 相机接入路由器传图 · SnapBridge 替代 · PTP/IP Android 客户端 · NEF/RAW 下载 · 断点续传 · Kotlin Compose · Nikon wireless tethering · Nikon camera photo transfer · Z-series photo transfer
+尼康图传 · 尼康无线图传 · 尼康相机无线传照片到手机 · 尼康 Z 系列图传 · Z50II 图传 · Z8 图传 · Z9 图传 · 尼康实时取景 · 尼康遥控拍摄 · 点屏对焦 · 遥控快门 · 间隔拍摄 · 峰值对焦 · 取景网格 · SnapBridge 替代 · 相机热点直连 · 尼康 STA 模式 · 相机接入路由器传图 · PTP/IP Android 客户端 · NEF/RAW 下载 · 视频下载 · 断点续传 · 后台传输队列 · Kotlin Compose
+
+Nikon wireless tethering · Nikon Z photo transfer · Nikon camera to Android · remote shutter · intervalometer · live view · focus peaking · PTP/IP
