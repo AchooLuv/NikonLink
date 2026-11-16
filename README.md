@@ -2,9 +2,13 @@
   <img src="docs/brand.png" height="36" alt="NikonLink" />&nbsp;NikonLink
 </h1>
 
-**尼康 Z 系列相机 → Android 无线图传与遥控 App。** 手机连上相机 Wi-Fi，就能浏览、下载相机里的照片 / RAW / 视频，实时取景、点屏幕对焦、遥控快门与间隔拍摄；不用电脑、不用尼康官方 App、不用数据线。
+**尼康图传 NikonLink · 简单易用 · 稳定连接 · 极速传图 · 全功能遥控**
 
-支持 **相机热点（AP）** 与 **同一 Wi-Fi（STA）** 两种连法，适用于 Z50II、Z8、Z9、Z6III、Z5II、Zf、Z30 等 Z 系列机型；也可以当作 SnapBridge 的替代方案，把尼康相机照片无线传到手机。
+把尼康 Z 系列相机的照片 / RAW / 视频无线传到安卓手机，也能在手机上实时取景、点屏对焦、按快门、间隔拍摄。不用电脑、不用尼康官方 App、不用数据线。支持相机热点（AP）与同一 Wi-Fi（STA），适用于 Z50II、Z8、Z9、Z6III、Z5II、Zf、Z30 等机型，也是 SnapBridge 的替代方案。
+
+*Nikon Z wireless tethering & photo transfer for Android (Kotlin, PTP/IP).*
+
+*Nikon Z wireless tethering & photo transfer for Android (Kotlin, PTP/IP).*
 
 <p align="center">
   <a href="https://github.com/AchooLuv/NikonLink/releases/latest"><img src="https://img.shields.io/github/v/release/AchooLuv/NikonLink?label=APK&color=FDE804" alt="尼康图传 NikonLink APK 下载"></a>
