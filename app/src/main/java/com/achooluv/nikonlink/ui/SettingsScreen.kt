@@ -275,7 +275,14 @@ fun SettingsScreen(repo: NikonLinkRepository) {
                 )
             },
             confirmButton = {
-                TextButton(onClick = { confirmClear = false }) { Text("知道了", color = NikonYellow) }
+                TextButton(onClick = {
+                    repo.clearImportRecords()
+                    confirmClear = false
+                    toast(context, "下载记录已清除")
+                }) { Text("清除", color = NikonYellow) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) { Text("取消", color = PaperDim) }
             },
         )
     }

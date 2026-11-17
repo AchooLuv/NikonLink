@@ -46,6 +46,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.MutableState
@@ -125,6 +126,7 @@ private class ThumbStore(private val maxBytes: Long = 32L * 1024 * 1024) {
     }
 }
 
+@Immutable
 private data class LibraryItem(
     val key: String,
     val files: List<CameraFile>,
@@ -161,6 +163,7 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val queueBusy by repo.queueBusy.collectAsStateWithLifecycle()
     val queueSupported by repo.queueSupported.collectAsStateWithLifecycle()
     val deleteState by repo.deleteState.collectAsStateWithLifecycle()
+    val transferHandles by repo.transferHandles.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var filter by remember { mutableStateOf(LibraryFilter.ALL) }
@@ -169,14 +172,18 @@ fun BrowseScreen(repo: NikonLinkRepository) {
     val thumbs = remember { ThumbStore() }
 
     val connected = state is ConnState.Connected
-    val importedKeys = remember(files, importsRev) {
-        buildItems(files)
+    // Grouping is independent of download state; rebuilding it on every finished
+    // file would re-group the whole page once per transfer.
+    val items = remember(files) { buildItems(files) }
+    val queueItems = remember(queue) { buildItems(queue) }
+    val importedKeys = remember(items, importsRev) {
+        items
             .filter { item -> item.files.all { repo.isImported(it) } }
             .map { it.key }
             .toSet()
     }
-    val visible = remember(files, filter, queue, importedKeys, importsRev) {
-        val source = if (filter == LibraryFilter.MARKED) buildItems(queue) else buildItems(files)
+    val visible = remember(items, queueItems, filter, importedKeys) {
+        val source = if (filter == LibraryFilter.MARKED) queueItems else items
         source.filter { item ->
             when (filter) {
                 LibraryFilter.ALL, LibraryFilter.MARKED -> true
@@ -303,6 +310,7 @@ fun BrowseScreen(repo: NikonLinkRepository) {
                             store = thumbs,
                             selected = item.key in selection,
                             imported = item.key in importedKeys,
+                            downloading = item.files.any { it.handle in transferHandles },
                             load = {
                                 repo.thumbnail(item.primary.handle)
                                     ?: if (item.primary.kind == FileKind.MOVIE && repo.isImported(item.primary)) {
@@ -467,6 +475,7 @@ private fun ThumbCell(
     store: ThumbStore,
     selected: Boolean,
     imported: Boolean,
+    downloading: Boolean = false,
     load: suspend () -> ByteArray?,
     enabled: Boolean = true,
     onClick: () -> Unit,
@@ -532,6 +541,20 @@ private fun ThumbCell(
                         contentDescription = "已下载",
                         tint = Mint,
                         modifier = Modifier.size(11.dp),
+                    )
+                }
+            } else if (downloading) {
+                Box(
+                    Modifier
+                        .size(18.dp)
+                        .background(Color(0xCC0B0B0C), CircleShape)
+                        .border(1.dp, NikonYellow.copy(alpha = 0.7f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(11.dp),
+                        strokeWidth = 1.5.dp,
+                        color = NikonYellow,
                     )
                 }
             }

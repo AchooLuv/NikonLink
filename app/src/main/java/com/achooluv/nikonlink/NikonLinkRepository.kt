@@ -1699,6 +1699,10 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val pendingLock = Any()
     private var queueWorker: Job? = null
 
+    /** Handles that are queued or currently downloading, for the grid indicator. */
+    private val _transferHandles = MutableStateFlow<Set<Int>>(emptySet())
+    val transferHandles: StateFlow<Set<Int>> = _transferHandles
+
     private val _queueCount = MutableStateFlow(0)
 
     /**
@@ -1714,6 +1718,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
             }
             _queueCount.value = pendingFiles.size
         }
+        _transferHandles.value = _transferHandles.value + expanded.map { it.handle }
         startQueueWorker()
     }
 
@@ -1731,11 +1736,23 @@ class NikonLinkRepository private constructor(private val app: Application) {
                         list
                     }
                     if (batch.isEmpty()) break
+                    val handleByName = batch.associate { it.name to it.handle }
+                    var lastDone = 0
                     val result = runCatching {
                         downloader.download(client, batch, chunk, force = false, partial) { p ->
                             _progress.value = p
+                            // Update "downloaded" badges as each file lands, not at batch end.
+                            if (p.doneCount > lastDone) {
+                                lastDone = p.doneCount
+                                handleByName[p.fileName]?.let { done ->
+                                    _transferHandles.value = _transferHandles.value - done
+                                }
+                                _importsVersion.value++
+                            }
                         }
                     }.getOrNull()
+                    // Anything left (failed or cancelled) stops showing the indicator.
+                    _transferHandles.value = _transferHandles.value - batch.map { it.handle }.toSet()
                     if (result != null) {
                         if (result.failed.isNotEmpty()) {
                             _failedFiles.value = _failedFiles.value + result.failed
@@ -1824,6 +1841,12 @@ class NikonLinkRepository private constructor(private val app: Application) {
     private val _delete = MutableStateFlow(DeleteState())
     val deleteState: StateFlow<DeleteState> = _delete
 
+    /** Clears the downloaded-file records so the grid can show them as new again. */
+    fun clearImportRecords() {
+        settings.clearImportRecords()
+        _importsVersion.value++
+    }
+
     fun clearDeleteState() {
         _delete.value = DeleteState()
     }
@@ -1896,6 +1919,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
     }
 
     fun cancelDownloads() {
+        _transferHandles.value = emptySet()
         synchronized(pendingLock) {
             pendingFiles.clear()
             _queueCount.value = 0
@@ -1941,6 +1965,7 @@ class NikonLinkRepository private constructor(private val app: Application) {
                             supportsPartial = _profile.value?.supportsPartialObject ?: true,
                         ) { p -> _progress.value = p }
                     }
+                    _importsVersion.value++
                     return@launch
                 }
                 delay(700L * (attempt + 1))

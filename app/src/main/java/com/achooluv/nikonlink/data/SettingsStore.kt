@@ -170,6 +170,15 @@ class SettingsStore(context: Context) {
     }
 
     /** Flushes buffered import records (call once a transfer batch finishes). */
+    /** Forgets every "already downloaded" record without touching the gallery. */
+    fun clearImportRecords() {
+        synchronized(importLock) {
+            importedKeys.clear()
+            pendingImportWrites = 0
+            imports.edit().clear().apply()
+        }
+    }
+
     fun flushImports() {
         val snapshot = synchronized(importLock) {
             pendingImportWrites = 0
