@@ -18,9 +18,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/connect-connected.jpg" width="200" alt="连接相机">
-  <img src="docs/screenshots/browse.jpg" width="200" alt="浏览与下载">
-  <img src="docs/screenshots/settings.jpg" width="200" alt="设置页">
+  <img src="docs/screenshots/connect-connected.jpg" width="180" alt="连接相机">
+  <img src="docs/screenshots/browse.jpg" width="180" alt="批量下载与 RAW+JPG">
+  <img src="docs/screenshots/remote.jpg" width="180" alt="遥控拍摄">
+  <img src="docs/screenshots/settings.jpg" width="180" alt="设置页">
 </p>
 
 ---
