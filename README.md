@@ -14,10 +14,13 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/connect-idle.jpg" width="180" alt="连接页">
-  <img src="docs/screenshots/connect-connected.jpg" width="180" alt="已连接">
-  <img src="docs/screenshots/browse.jpg" width="180" alt="浏览与下载">
-  <img src="docs/screenshots/settings.jpg" width="180" alt="设置页">
+  <img src="docs/screenshots/poster.jpg" width="760" alt="NikonLink 尼康图传 · 尼康 Z 系列相机无线传到安卓手机">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/connect-connected.jpg" width="200" alt="连接相机">
+  <img src="docs/screenshots/browse.jpg" width="200" alt="浏览与下载">
+  <img src="docs/screenshots/settings.jpg" width="200" alt="设置页">
 </p>
 
 ---
